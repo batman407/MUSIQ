@@ -1,0 +1,20 @@
+{
+  "name": "musiq",
+  "short_name": "MUSIQ",
+  "description": "MUSIQ — Music starts here. Intelligent music creation, browser-based studio production, and sheet music optical recognition.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090B",
+  "theme_color": "#09090B",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "categories": ["music", "entertainment", "productivity"]
+}

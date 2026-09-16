@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-primary: #09090B;
+    --surface-elevated: #111114;
+    --surface-elevated-2: #18181D;
+    --border-subtle: #27272D;
+    --border-subtle-hover: #383842;
+    --text-primary: #F4F1EA;
+    --text-secondary: #9A9AA3;
+    --text-tertiary: #6E6E77;
+    --musiq-violet: #8B5CF6;
+    --musiq-violet-light: #A78BFA;
+    --musiq-violet-dark: #6D28D9;
+    --musiq-cyan: #67E8F9;
+    --status-success: #4ADE80;
+    --status-warning: #FBBF24;
+    --status-error: #F87171;
+    --status-recording: #EF4444;
+    --paper-bg: #F5F2EB;
+    --paper-ink: #18181C;
+    --paper-subtle: #D8D4C7;
+  }
+
+  body {
+    font-family: 'Geist', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272D;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3F3F46;
+}
+
+/* Monospace music stats & time counters */
+.font-music-mono {
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* Restrained Glows */
+.violet-glow {
+  box-shadow: 0 0 20px -5px rgba(139, 92, 246, 0.35);
+}
+
+.violet-glow-sm {
+  box-shadow: 0 0 10px -2px rgba(139, 92, 246, 0.25);
+}
+
+/* Paper Score Mode Styling */
+.score-paper-mode {
+  background-color: var(--paper-bg) !important;
+  color: var(--paper-ink) !important;
+}
+.score-paper-mode .score-staff-line {
+  stroke: #4A4A52 !important;
+}
+.score-paper-mode .score-note-ink {
+  fill: #111114 !important;
+  stroke: #111114 !important;
+}
+
+/* Rhythmic pulse animations */
+@keyframes pulseSubtle {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 2.4s ease-in-out infinite;
+}
+
+@keyframes recordingBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.animate-rec-blink {
+  animation: recordingBlink 1.2s ease-in-out infinite;
+}
+
+/* Slide-in animation for BottomSheet */
+@keyframes slideInFromBottom {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.animate-in {
+  animation-fill-mode: both;
+}
+.slide-in-from-bottom {
+  animation-name: slideInFromBottom;
+}
+.fade-in {
+  animation-name: fadeInAnim;
+}
+@keyframes fadeInAnim {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.duration-250 { animation-duration: 250ms; }
+.duration-200 { animation-duration: 200ms; }
+.duration-300 { animation-duration: 300ms; }
+
+/* Studio timeline 16-column grid */
+.grid-cols-16 { grid-template-columns: repeat(16, minmax(0, 1fr)); }
+
+/* Studio left-border color accent */
+.border-l-4 { border-left-width: 4px; }
+.border-l-\[\#8B5CF6\] { border-left-color: #8B5CF6; }
+
+/* Safe area for mobile bottom navigation */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Viewport height without mobile browser chrome */
+.h-screen-safe {
+  height: 100dvh;
+}
