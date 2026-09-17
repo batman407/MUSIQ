@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ViewMode, GeneratedSong, ScoreProject, StudioProject, User } from './types';
 import { storageService } from './services/storageService';
-import { DEMO_SONG, DEMO_SCORE, DEMO_STUDIO_PROJECT } from './services/mockData';
+import { DEMO_SONG, DEMO_STUDIO_PROJECT } from './services/mockData';
 
 // Brand & Intro
 import { IntroAnimation } from './components/brand/IntroAnimation';
@@ -36,9 +36,9 @@ export function App() {
     return songs[0] || DEMO_SONG;
   });
 
-  const [currentScore, setCurrentScore] = useState<ScoreProject>(() => {
+  const [currentScore, setCurrentScore] = useState<ScoreProject | null>(() => {
     const scores = storageService.getScores();
-    return scores[0] || DEMO_SCORE;
+    return scores[0] || null;
   });
 
   const [currentStudio, setCurrentStudio] = useState<StudioProject>(() => {
@@ -144,7 +144,7 @@ export function App() {
                 currentView === 'studio' 
                   ? currentStudio.title 
                   : currentView === 'vision-result' 
-                  ? currentScore.title 
+                  ? currentScore?.title 
                   : undefined
               }
             />
@@ -245,36 +245,54 @@ export function App() {
           />
 
           <div className="space-y-1.5 max-h-60 overflow-y-auto font-mono text-xs">
-            <div
-              onClick={() => {
-                navigateTo('create');
-                setIsSearchModalOpen(false);
-              }}
-              className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
-            >
-              <span>Midnight in Lagos (Song)</span>
-              <span className="text-[#A78BFA]">CREATE →</span>
-            </div>
-            <div
-              onClick={() => {
-                navigateTo('vision-result');
-                setIsSearchModalOpen(false);
-              }}
-              className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
-            >
-              <span>Abide With Me — SATB Choir (Score)</span>
-              <span className="text-[#67E8F9]">VISION →</span>
-            </div>
-            <div
-              onClick={() => {
-                navigateTo('studio');
-                setIsSearchModalOpen(false);
-              }}
-              className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
-            >
-              <span>Midnight in Lagos (Studio Session)</span>
-              <span className="text-[#4ADE80]">STUDIO →</span>
-            </div>
+            {storageService.getSongs()
+              .filter(s => !globalSearchTerm || s.title.toLowerCase().includes(globalSearchTerm.toLowerCase()))
+              .map(s => (
+                <div
+                  key={s.id}
+                  onClick={() => {
+                    setCurrentSong(s);
+                    navigateTo('create');
+                    setIsSearchModalOpen(false);
+                  }}
+                  className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
+                >
+                  <span className="truncate">{s.title} (Song)</span>
+                  <span className="text-[#A78BFA] shrink-0 ml-2">CREATE →</span>
+                </div>
+              ))}
+            {storageService.getScores()
+              .filter(s => !globalSearchTerm || s.title.toLowerCase().includes(globalSearchTerm.toLowerCase()) || s.originalFilename?.toLowerCase().includes(globalSearchTerm.toLowerCase()))
+              .map(sc => (
+                <div
+                  key={sc.id}
+                  onClick={() => {
+                    setCurrentScore(sc);
+                    navigateTo('vision-result');
+                    setIsSearchModalOpen(false);
+                  }}
+                  className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
+                >
+                  <span className="truncate">{sc.title || sc.originalFilename} (Score)</span>
+                  <span className="text-[#67E8F9] shrink-0 ml-2">VISION →</span>
+                </div>
+              ))}
+            {storageService.getStudioProjects()
+              .filter(p => !globalSearchTerm || p.title.toLowerCase().includes(globalSearchTerm.toLowerCase()))
+              .map(p => (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    setCurrentStudio(p);
+                    navigateTo('studio');
+                    setIsSearchModalOpen(false);
+                  }}
+                  className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
+                >
+                  <span className="truncate">{p.title} (Studio)</span>
+                  <span className="text-[#4ADE80] shrink-0 ml-2">STUDIO →</span>
+                </div>
+              ))}
           </div>
         </div>
       </Modal>

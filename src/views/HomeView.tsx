@@ -240,60 +240,89 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredScores.map(score => (
-              <div
-                key={score.id}
-                onClick={() => {
-                  onSelectScore(score);
-                  onNavigate('vision-result');
-                }}
-                className="group bg-[#111114] border border-[#27272D] hover:border-[#67E8F9]/50 rounded-2xl p-4 transition-all cursor-pointer flex flex-col justify-between"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="px-2 py-0.5 rounded-md bg-[#8B5CF6]/20 text-[#A78BFA] text-[10px] font-mono font-semibold">
-                      {score.arrangementType} CHOIR
-                    </span>
-                    <span className="text-[11px] font-mono text-[#4ADE80]">
-                      {Math.round(score.confidenceOverall * 100)}% OMR Match
-                    </span>
-                  </div>
-
-                  <div>
-                    <h4 className="text-sm font-semibold text-[#F4F1EA] truncate group-hover:text-[#67E8F9] transition-colors">
-                      {score.title}
-                    </h4>
-                    <p className="text-xs text-[#9A9AA3] truncate mt-0.5">
-                      {score.composer}
-                    </p>
-                  </div>
-
-                  {/* Voice parts preview pills */}
-                  <div className="flex items-center gap-1.5 pt-1">
-                    {score.parts.map(part => (
-                      <span
-                        key={part.id}
-                        className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#18181D] border border-[#27272D] text-[#F4F1EA]"
-                      >
-                        {part.shortName}
-                      </span>
-                    ))}
-                    <span className="text-[11px] font-mono text-[#9A9AA3] ml-auto">
-                      {score.measuresCount} Measures
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] font-mono text-[#9A9AA3] pt-3 border-t border-[#27272D]/60 mt-3">
-                  <span>{score.keySignature} • {score.tempoBpm} BPM</span>
-                  <span className="text-[#67E8F9] group-hover:translate-x-0.5 transition-transform">
-                    Hear parts →
-                  </span>
-                </div>
+          {filteredScores.length === 0 ? (
+            <div 
+              onClick={() => onNavigate('vision')}
+              className="p-8 rounded-2xl bg-[#111114] border border-[#27272D] hover:border-[#67E8F9]/40 transition-colors cursor-pointer text-center space-y-2"
+            >
+              <p className="text-sm font-medium text-[#F4F1EA]">No scanned sheet music yet</p>
+              <p className="text-xs text-[#9A9AA3]">Upload or photograph sheet music to transcribe it into structured notation.</p>
+              <div className="pt-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#18181D] border border-[#27272D] text-xs font-mono text-[#67E8F9]">
+                  <Eye size={13} />
+                  <span>Scan or Upload a Score →</span>
+                </span>
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredScores.map(score => (
+                <div
+                  key={score.id}
+                  onClick={() => {
+                    onSelectScore(score);
+                    onNavigate('vision-result');
+                  }}
+                  className="group bg-[#111114] border border-[#27272D] hover:border-[#67E8F9]/50 rounded-2xl p-4 transition-all cursor-pointer flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 rounded-md bg-[#8B5CF6]/20 text-[#A78BFA] text-[10px] font-mono font-semibold">
+                        {score.arrangementType || 'SCORE'}
+                      </span>
+                      {score.pagesCount && (
+                        <span className="text-[11px] font-mono text-[#9A9AA3]">
+                          {score.pagesCount} Page{score.pagesCount === 1 ? '' : 's'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-semibold text-[#F4F1EA] truncate group-hover:text-[#67E8F9] transition-colors">
+                        {score.title || score.originalFilename}
+                      </h4>
+                      {score.composer && (
+                        <p className="text-xs text-[#9A9AA3] truncate mt-0.5">
+                          {score.composer}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Voice parts preview pills */}
+                    {score.parts && score.parts.length > 0 && (
+                      <div className="flex items-center gap-1.5 pt-1 overflow-x-auto">
+                        {score.parts.slice(0, 4).map(part => (
+                          <span
+                            key={part.id}
+                            className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#18181D] border border-[#27272D] text-[#F4F1EA]"
+                          >
+                            {part.shortName || part.name.slice(0, 3)}
+                          </span>
+                        ))}
+                        {score.parts.length > 4 && (
+                          <span className="text-[10px] font-mono text-[#9A9AA3]">
+                            +{score.parts.length - 4}
+                          </span>
+                        )}
+                        {score.measuresCount > 0 && (
+                          <span className="text-[11px] font-mono text-[#9A9AA3] ml-auto">
+                            {score.measuresCount} Meas
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] font-mono text-[#9A9AA3] pt-3 border-t border-[#27272D]/60 mt-3">
+                    <span>{score.keySignature ? `${score.keySignature} • ` : ''}{score.tempoBpm ? `${score.tempoBpm} BPM` : 'Score Project'}</span>
+                    <span className="text-[#67E8F9] group-hover:translate-x-0.5 transition-transform">
+                      View score →
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Recent Studio Projects */}

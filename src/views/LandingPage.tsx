@@ -230,27 +230,27 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </div>
                 </div>
 
-                {/* Simulated SATB Score Alignment Preview */}
+                {/* Multi-Part Score Transcription Architecture */}
                 <div className="bg-[#18181D] border border-[#27272D] rounded-xl p-4 space-y-2 font-mono text-xs">
                   <div className="flex items-center justify-between pb-2 border-b border-[#27272D] text-[#9A9AA3]">
-                    <span>SATB RECOGNITION</span>
-                    <span className="text-[#4ADE80] font-semibold">CONFIDENCE 94%</span>
+                    <span>MULTI-PART NOTATION PREVIEW</span>
+                    <span className="text-[#67E8F9] font-semibold">STRUCTURED XML</span>
                   </div>
                   <div className="grid grid-cols-5 gap-2 items-center p-1.5 rounded bg-[#111114]">
-                    <span className="text-[#8B5CF6] font-bold">S</span>
-                    <span className="col-span-4 text-[#9A9AA3] truncate">G4 — F4 — Eb4 (Sol-fa: m, r, d)</span>
+                    <span className="text-[#8B5CF6] font-bold">PART 1</span>
+                    <span className="col-span-4 text-[#9A9AA3] truncate">Treble Clef • Key Signature • Notes</span>
                   </div>
                   <div className="grid grid-cols-5 gap-2 items-center p-1.5 rounded bg-[#8B5CF6]/20 border border-[#8B5CF6]">
-                    <span className="text-[#A78BFA] font-bold">A [SOLO]</span>
-                    <span className="col-span-4 text-[#F4F1EA] font-semibold truncate">Eb4 — D4 — Eb4 (Lord with me abide)</span>
+                    <span className="text-[#A78BFA] font-bold">PART 2</span>
+                    <span className="col-span-4 text-[#F4F1EA] font-semibold truncate">Alto Clef / Horn / Voice • Pitches & Rhythms</span>
                   </div>
                   <div className="grid grid-cols-5 gap-2 items-center p-1.5 rounded bg-[#111114]">
-                    <span className="text-[#67E8F9] font-bold">T</span>
-                    <span className="col-span-4 text-[#9A9AA3] truncate">Bb3 — Bb3 — G3 (Sol-fa: s,, s,, m,)</span>
+                    <span className="text-[#67E8F9] font-bold">PART 3</span>
+                    <span className="col-span-4 text-[#9A9AA3] truncate">Bass Clef • Polyphonic Staves & Barlines</span>
                   </div>
                   <div className="grid grid-cols-5 gap-2 items-center p-1.5 rounded bg-[#111114]">
-                    <span className="text-[#4ADE80] font-bold">B</span>
-                    <span className="col-span-4 text-[#9A9AA3] truncate">Eb3 — Bb2 — Eb3 (Help of the helpless)</span>
+                    <span className="text-[#4ADE80] font-bold">PART 4</span>
+                    <span className="col-span-4 text-[#9A9AA3] truncate">Continuous Multi-Page Systems & Measures</span>
                   </div>
                 </div>
               </div>

@@ -1,0 +1,16 @@
+{
+  "name": "musiq-omr-backend",
+  "version": "1.0.0",
+  "description": "Production Audiveris OMR REST API Service for MUSIQ",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

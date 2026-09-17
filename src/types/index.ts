@@ -158,9 +158,9 @@ export interface ScoreMeasure {
 
 export interface MusicalPart {
   id: string;
-  name: string; // e.g. 'Soprano', 'Alto', 'Tenor', 'Bass'
-  shortName: string; // 'S', 'A', 'T', 'B'
-  clef: 'treble' | 'bass' | 'alto';
+  name: string; // Dynamic instrument/part: 'Trumpet in Bb', 'Horn in F', 'Trombone', 'Tuba', 'Organ', 'Soprano', etc.
+  shortName: string; // 'Tpt 1', 'Hn', 'Tbn', 'Tba', 'Org', 'S', 'A', 'T', 'B', etc.
+  clef: 'treble' | 'bass' | 'alto' | 'tenor';
   color: string;
   defaultMidiProgram?: number;
   measures: ScoreMeasure[];
@@ -170,7 +170,7 @@ export type PlaybackMixMode = 'full' | 'solo' | 'my-part-plus-bg' | 'custom';
 
 export interface PlaybackMix {
   mode: PlaybackMixMode;
-  activePartId: string; // The primary focused part (e.g. 'A' for Alto)
+  activePartId: string;
   partVolumes: Record<string, number>; // 0 to 1
   isMuted: Record<string, boolean>;
 }
@@ -178,16 +178,24 @@ export interface PlaybackMix {
 export interface ScoreProject {
   id: string;
   title: string;
+  originalFilename: string;
+  mimeType: string;
+  fileSize?: number;
   composer?: string;
-  keySignature: string; // e.g. 'Eb Major'
-  timeSignature: string; // e.g. '4/4'
-  tempoBpm: number;
-  arrangementType: 'SATB' | 'SAB' | 'SSA' | 'SSAA' | 'TTBB' | 'Unison' | 'Custom';
+  keySignature?: string;
+  timeSignature?: string;
+  tempoBpm?: number;
+  arrangementType?: string;
   parts: MusicalPart[];
   measuresCount: number;
-  originalScanUrl: string;
-  confidenceOverall: number;
   pagesCount: number;
+  currentPage?: number;
+  pages: string[]; // URLs or base64 data URLs of all uploaded pages
+  originalScanUrl: string; // Primary scan or first page
+  rawMusicXml?: string; // Genuine MusicXML from OMR
+  recognitionStatus: 'idle' | 'uploading' | 'recognizing' | 'completed' | 'failed' | 'unconnected';
+  errorMessage?: string;
+  confidenceOverall?: number;
   createdAt: string;
   isFavorite?: boolean;
 }

@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Server temporary files
+server/node_modules
+server/uploads
+server/jobs
