@@ -29,7 +29,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       id: 'usr-' + Date.now(),
       name: name.trim() || email.split('@')[0] || 'Musician',
       email: email || 'creator@musiq.audio',
-      role: 'Musician'
+      role: 'Classical Musician'
     };
     storageService.setUser(user);
     onSuccess(user);
@@ -41,7 +41,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       id: `usr-${provider}-${Date.now()}`,
       name: `${provider === 'google' ? 'Google' : 'Apple'} Creator`,
       email: `creator@${provider}.com`,
-      role: 'Musician'
+      role: 'Classical Musician'
     };
     storageService.setUser(user);
     onSuccess(user);

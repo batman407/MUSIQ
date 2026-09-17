@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ViewMode, GeneratedSong, ScoreProject, StudioProject, User } from './types';
+import { ViewMode, ScoreProject, User } from './types';
 import { storageService } from './services/storageService';
-import { DEMO_SONG, DEMO_STUDIO_PROJECT } from './services/mockData';
 
 // Brand & Intro
 import { IntroAnimation } from './components/brand/IntroAnimation';
@@ -13,9 +12,7 @@ import { AppHeader } from './components/layout/AppHeader';
 // Views
 import { LandingPage } from './views/LandingPage';
 import { HomeView } from './views/HomeView';
-import { CreateView } from './views/CreateView';
 import { VisionView } from './views/VisionView';
-import { StudioView } from './views/StudioView';
 import { LibraryView } from './views/LibraryView';
 import { SettingsView } from './views/SettingsView';
 import { AuthModal } from './views/AuthModal';
@@ -30,20 +27,10 @@ export function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('landing');
   const [isRailCollapsed, setIsRailCollapsed] = useState<boolean>(false);
 
-  // Active Project States
-  const [currentSong, setCurrentSong] = useState<GeneratedSong>(() => {
-    const songs = storageService.getSongs();
-    return songs[0] || DEMO_SONG;
-  });
-
+  // Active Score State (Source of truth: user uploads)
   const [currentScore, setCurrentScore] = useState<ScoreProject | null>(() => {
     const scores = storageService.getScores();
     return scores[0] || null;
-  });
-
-  const [currentStudio, setCurrentStudio] = useState<StudioProject>(() => {
-    const studios = storageService.getStudioProjects();
-    return studios[0] || DEMO_STUDIO_PROJECT;
   });
 
   // User & Onboarding
@@ -73,21 +60,10 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Handle Song Generation completion
-  const handleSongGenerated = (song: GeneratedSong) => {
-    setCurrentSong(song);
-  };
-
   // Handle Vision Score transcription completion
   const handleScoreTranscribed = (score: ScoreProject) => {
     setCurrentScore(score);
     setCurrentView('vision-result');
-  };
-
-  // Handle Studio project save / open
-  const handleOpenInStudio = (project: StudioProject) => {
-    setCurrentStudio(project);
-    setCurrentView('studio');
   };
 
   // Navigate helper
@@ -141,9 +117,7 @@ export function App() {
               onNavigate={navigateTo}
               onOpenSearch={() => setIsSearchModalOpen(true)}
               title={
-                currentView === 'studio' 
-                  ? currentStudio.title 
-                  : currentView === 'vision-result' 
+                currentView === 'vision-result' 
                   ? currentScore?.title 
                   : undefined
               }
@@ -154,30 +128,12 @@ export function App() {
               {currentView === 'home' && (
                 <HomeView
                   onNavigate={navigateTo}
-                  onSelectSong={song => {
-                    setCurrentSong(song);
-                    navigateTo('create');
-                  }}
                   onSelectScore={score => {
                     setCurrentScore(score);
                     navigateTo('vision-result');
                   }}
-                  onSelectStudio={project => {
-                    setCurrentStudio(project);
-                    navigateTo('studio');
-                  }}
-                  songs={storageService.getSongs()}
                   scores={storageService.getScores()}
-                  studioProjects={storageService.getStudioProjects()}
                   userRole={currentUser?.role}
-                />
-              )}
-
-              {currentView === 'create' && (
-                <CreateView
-                  currentSong={currentSong}
-                  onSongGenerated={handleSongGenerated}
-                  onOpenInStudio={handleOpenInStudio}
                 />
               )}
 
@@ -185,32 +141,16 @@ export function App() {
                 <VisionView
                   currentScore={currentScore}
                   onScoreTranscribed={handleScoreTranscribed}
-                  onOpenInStudio={handleOpenInStudio}
                   isPaperMode={isPaperMode}
-                />
-              )}
-
-              {currentView === 'studio' && (
-                <StudioView
-                  project={currentStudio}
-                  onSaveProject={(updated) => setCurrentStudio(updated)}
                 />
               )}
 
               {currentView === 'library' && (
                 <LibraryView
                   onNavigate={navigateTo}
-                  onSelectSong={song => {
-                    setCurrentSong(song);
-                    navigateTo('create');
-                  }}
                   onSelectScore={score => {
                     setCurrentScore(score);
                     navigateTo('vision-result');
-                  }}
-                  onSelectStudio={project => {
-                    setCurrentStudio(project);
-                    navigateTo('studio');
                   }}
                 />
               )}
@@ -231,7 +171,7 @@ export function App() {
       <Modal
         isOpen={isSearchModalOpen}
         onClose={() => setIsSearchModalOpen(false)}
-        title="Universal Search"
+        title="Search Transcriptions"
         maxWidth="md"
       >
         <div className="space-y-4">
@@ -240,27 +180,11 @@ export function App() {
             autoFocus
             value={globalSearchTerm}
             onChange={e => setGlobalSearchTerm(e.target.value)}
-            placeholder="Search all songs, scores, tracks, and instruments..."
+            placeholder="Search scores by title or filename..."
             className="w-full bg-[#18181D] border border-[#27272D] focus:border-[#8B5CF6] rounded-xl px-4 py-2.5 text-sm text-[#F4F1EA] focus:outline-none"
           />
 
           <div className="space-y-1.5 max-h-60 overflow-y-auto font-mono text-xs">
-            {storageService.getSongs()
-              .filter(s => !globalSearchTerm || s.title.toLowerCase().includes(globalSearchTerm.toLowerCase()))
-              .map(s => (
-                <div
-                  key={s.id}
-                  onClick={() => {
-                    setCurrentSong(s);
-                    navigateTo('create');
-                    setIsSearchModalOpen(false);
-                  }}
-                  className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
-                >
-                  <span className="truncate">{s.title} (Song)</span>
-                  <span className="text-[#A78BFA] shrink-0 ml-2">CREATE →</span>
-                </div>
-              ))}
             {storageService.getScores()
               .filter(s => !globalSearchTerm || s.title.toLowerCase().includes(globalSearchTerm.toLowerCase()) || s.originalFilename?.toLowerCase().includes(globalSearchTerm.toLowerCase()))
               .map(sc => (
@@ -273,26 +197,15 @@ export function App() {
                   }}
                   className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
                 >
-                  <span className="truncate">{sc.title || sc.originalFilename} (Score)</span>
-                  <span className="text-[#67E8F9] shrink-0 ml-2">VISION →</span>
+                  <span className="truncate">{sc.title || sc.originalFilename}</span>
+                  <span className="text-[#67E8F9] shrink-0 ml-2">SCORE →</span>
                 </div>
               ))}
-            {storageService.getStudioProjects()
-              .filter(p => !globalSearchTerm || p.title.toLowerCase().includes(globalSearchTerm.toLowerCase()))
-              .map(p => (
-                <div
-                  key={p.id}
-                  onClick={() => {
-                    setCurrentStudio(p);
-                    navigateTo('studio');
-                    setIsSearchModalOpen(false);
-                  }}
-                  className="p-2.5 rounded-lg hover:bg-[#18181D] cursor-pointer flex items-center justify-between text-[#F4F1EA]"
-                >
-                  <span className="truncate">{p.title} (Studio)</span>
-                  <span className="text-[#4ADE80] shrink-0 ml-2">STUDIO →</span>
-                </div>
-              ))}
+            {storageService.getScores().length === 0 && (
+              <div className="py-6 text-center text-[#9A9AA3]">
+                No transcriptions found. Upload a score to get started.
+              </div>
+            )}
           </div>
         </div>
       </Modal>

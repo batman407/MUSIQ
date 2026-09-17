@@ -3,7 +3,7 @@ import { Modal } from '../components/common/Modal';
 import { Button } from '../components/common/Button';
 import { storageService } from '../services/storageService';
 import { User } from '../types';
-import { Mic2, Sliders, Music, Users, GraduationCap, PenTool, Compass } from 'lucide-react';
+import { Music, Users, GraduationCap, PenTool, Compass } from 'lucide-react';
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -12,13 +12,13 @@ interface OnboardingModalProps {
 }
 
 const ROLES: { id: User['role']; label: string; desc: string; icon: React.FC<{ size?: number; className?: string }> }[] = [
-  { id: 'Artist', label: 'Artist', desc: 'Writing songs, finding lyrics, creating new melodies', icon: Mic2 },
-  { id: 'Producer', label: 'Producer', desc: 'Arranging beats, multitrack mixing, mastering', icon: Sliders },
-  { id: 'Musician', label: 'Musician', desc: 'Playing instruments, practicing charts, transcribing', icon: Music },
-  { id: 'Choir / Singer', label: 'Choir / Singer', desc: 'Reading SATB sheet music, rehearsing harmony parts', icon: Users },
-  { id: 'Composer', label: 'Composer', desc: 'Orchestrating scores, harmonic notation, arrangements', icon: PenTool },
-  { id: 'Student', label: 'Student', desc: 'Learning music theory, sol-fa, sight reading', icon: GraduationCap },
-  { id: 'Other', label: 'Other Creator', desc: 'Exploring intelligent music creation tools', icon: Compass }
+  { id: 'Choir Director', label: 'Choir Director / Vocalist', desc: 'Reading SATB sheet music, rehearsing harmony parts and sol-fa', icon: Users },
+  { id: 'Classical Musician', label: 'Classical Musician', desc: 'Digitizing sheet music, practicing parts, adjusting tempo', icon: Music },
+  { id: 'Composer', label: 'Composer', desc: 'Transcribing paper scores to MusicXML for Sibelius, Dorico, Finale', icon: PenTool },
+  { id: 'Arranger', label: 'Arranger / Orchestrator', desc: 'Harmonic transcription, part extraction and notation editing', icon: PenTool },
+  { id: 'Band Director', label: 'Band Director', desc: 'Score study, transposing instruments and ensemble preparation', icon: Music },
+  { id: 'Music Student', label: 'Music Student / Educator', desc: 'Learning music theory, sight-reading, tonic sol-fa and note names', icon: GraduationCap },
+  { id: 'Other', label: 'Other Creator', desc: 'Exploring sheet music digitization and rehearsal playback', icon: Compass }
 ];
 
 export const OnboardingModal: React.FC<OnboardingModalProps> = ({
@@ -26,14 +26,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   onClose,
   onComplete
 }) => {
-  const [selectedRole, setSelectedRole] = useState<User['role']>('Choir / Singer');
+  const [selectedRole, setSelectedRole] = useState<User['role']>('Choir Director');
 
   const handleFinish = (roleToSave: string) => {
     const user = storageService.getUser() || {
       id: 'usr-default',
       name: 'Creator',
       email: 'creator@musiq.audio',
-      role: 'Choir / Singer'
+      role: 'Choir Director'
     };
     user.role = roleToSave as User['role'];
     storageService.setUser(user);
@@ -52,7 +52,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         <div>
           <h3 className="text-xl font-bold text-[#F4F1EA]">What brings you to MUSIQ?</h3>
           <p className="text-sm text-[#9A9AA3] mt-1">
-            We'll personalize your studio workspace, quick templates, and score instruments.
+            We'll tailor your score transcription tools, playback preferences, and notation views.
           </p>
         </div>
 
@@ -90,7 +90,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         <div className="flex items-center justify-between pt-2 border-t border-[#27272D]/60">
           <button
             type="button"
-            onClick={() => handleFinish('Musician')}
+            onClick={() => handleFinish('Choir Director')}
             className="text-xs text-[#9A9AA3] hover:text-[#F4F1EA] cursor-pointer"
           >
             Skip for now
@@ -100,10 +100,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             size="md"
             onClick={() => handleFinish(selectedRole)}
           >
-            Continue to Studio
+            Continue to MUSIQ
           </Button>
         </div>
       </div>
     </Modal>
   );
 };
+export default OnboardingModal;

@@ -1,15 +1,12 @@
-import { GeneratedSong, ScoreProject, StudioProject, LibraryItem, User } from '../types';
-import { DEMO_SONG, DEMO_STUDIO_PROJECT, INITIAL_LIBRARY_ITEMS } from './mockData';
+import { ScoreProject, LibraryItem, User } from '../types';
 
 const STORAGE_KEYS = {
   INTRO_SEEN: 'musiq_intro_seen_v1',
   USER: 'musiq_user',
-  SONGS: 'musiq_songs',
   SCORES: 'musiq_scores',
-  STUDIO: 'musiq_studio_projects',
   LIBRARY: 'musiq_library_items',
   SETTINGS: 'musiq_settings',
-  MIGRATION_V2: 'musiq_storage_migration_v2'
+  MIGRATION_V3: 'musiq_storage_migration_v3'
 };
 
 export interface MusiqSettings {
@@ -26,11 +23,11 @@ const DEFAULT_SETTINGS: MusiqSettings = {
   showMeasureNumbers: true
 };
 
-// Immediate migration on module load to purge any obsolete demo score data
+// Immediate migration on module load:
+// Purge any legacy demo scores, obsolete song data, and studio projects
 function runStorageMigration() {
   try {
-    // Check if migration has already been executed
-    if (localStorage.getItem(STORAGE_KEYS.MIGRATION_V2) !== 'true') {
+    if (localStorage.getItem(STORAGE_KEYS.MIGRATION_V3) !== 'true') {
       // 1. Audit and clean scores
       const rawScores = localStorage.getItem(STORAGE_KEYS.SCORES);
       if (rawScores) {
@@ -47,14 +44,18 @@ function runStorageMigration() {
         }
       }
 
-      // 2. Audit and clean library items
+      // 2. Audit and clean library items (keep only valid transcription scores)
       const rawLibrary = localStorage.getItem(STORAGE_KEYS.LIBRARY);
       if (rawLibrary) {
         try {
           const parsedLib = JSON.parse(rawLibrary);
           if (Array.isArray(parsedLib)) {
             const sanitizedLib = parsedLib.filter((item: any) => 
-              item && item.id !== 'lib-2' && item.originalRefId !== 'score-abide-with-me' && !item.title?.includes('Abide With Me')
+              item && 
+              item.type === 'score' &&
+              item.id !== 'lib-2' && 
+              item.originalRefId !== 'score-abide-with-me' && 
+              !item.title?.includes('Abide With Me')
             );
             localStorage.setItem(STORAGE_KEYS.LIBRARY, JSON.stringify(sanitizedLib));
           }
@@ -63,10 +64,14 @@ function runStorageMigration() {
         }
       }
 
-      localStorage.setItem(STORAGE_KEYS.MIGRATION_V2, 'true');
+      // 3. Clean obsolete create/studio storage keys
+      localStorage.removeItem('musiq_songs');
+      localStorage.removeItem('musiq_studio_projects');
+
+      localStorage.setItem(STORAGE_KEYS.MIGRATION_V3, 'true');
     }
   } catch {
-    // localStorage might be unavailable or restricted
+    // localStorage might be restricted
   }
 }
 
@@ -97,52 +102,22 @@ export const storageService = {
 
   getLibraryItems(): LibraryItem[] {
     const data = localStorage.getItem(STORAGE_KEYS.LIBRARY);
-    if (!data) {
-      this.saveLibraryItems(INITIAL_LIBRARY_ITEMS);
-      return INITIAL_LIBRARY_ITEMS;
-    }
+    if (!data) return [];
     try {
       const items: LibraryItem[] = JSON.parse(data);
-      // Ensure no obsolete demo scores ever leak through
-      return items.filter(i => i.originalRefId !== 'score-abide-with-me' && !i.title.includes('Abide With Me'));
+      return items.filter(i => 
+        i && 
+        i.type === 'score' && 
+        i.originalRefId !== 'score-abide-with-me' && 
+        !i.title.includes('Abide With Me')
+      );
     } catch {
-      return INITIAL_LIBRARY_ITEMS;
+      return [];
     }
   },
 
   saveLibraryItems(items: LibraryItem[]): void {
     localStorage.setItem(STORAGE_KEYS.LIBRARY, JSON.stringify(items));
-  },
-
-  getSongs(): GeneratedSong[] {
-    const data = localStorage.getItem(STORAGE_KEYS.SONGS);
-    if (!data) return [DEMO_SONG];
-    try {
-      return JSON.parse(data);
-    } catch {
-      return [DEMO_SONG];
-    }
-  },
-
-  saveSong(song: GeneratedSong): void {
-    const current = this.getSongs();
-    const updated = [song, ...current.filter(s => s.id !== song.id)];
-    localStorage.setItem(STORAGE_KEYS.SONGS, JSON.stringify(updated));
-
-    // Update library
-    const libItems = this.getLibraryItems();
-    const newLibItem: LibraryItem = {
-      id: `lib-${song.id}`,
-      title: song.title,
-      type: 'song',
-      subtitle: `${song.genre} • ${song.mood} • ${song.tempo} BPM`,
-      meta: `${Math.floor(song.durationSeconds / 60)}:${(song.durationSeconds % 60).toString().padStart(2, '0')} • ${song.key}`,
-      tags: [song.genre, song.mood, `${song.voice} Voice`],
-      favorite: false,
-      date: 'Just now',
-      originalRefId: song.id
-    };
-    this.saveLibraryItems([newLibItem, ...libItems.filter(i => i.originalRefId !== song.id)]);
   },
 
   getScores(): ScoreProject[] {
@@ -151,7 +126,6 @@ export const storageService = {
     try {
       const parsed: ScoreProject[] = JSON.parse(data);
       if (!Array.isArray(parsed)) return [];
-      // Clean any obsolete demo scores
       return parsed.filter(s => s && s.id !== 'score-abide-with-me' && !s.title?.includes('Abide With Me'));
     } catch {
       return [];
@@ -163,7 +137,7 @@ export const storageService = {
     const updated = [score, ...current.filter(s => s.id !== score.id)];
     localStorage.setItem(STORAGE_KEYS.SCORES, JSON.stringify(updated));
 
-    // Update library
+    // Update transcription library
     const libItems = this.getLibraryItems();
     const arrangementLabel = score.arrangementType || 'Sheet Music';
     const partsCount = score.parts ? score.parts.length : 0;
@@ -179,7 +153,9 @@ export const storageService = {
       tags: [arrangementLabel, 'Sheet Music', `${score.pagesCount || 1} Page${score.pagesCount === 1 ? '' : 's'}`],
       favorite: false,
       date: 'Just now',
-      originalRefId: score.id
+      originalRefId: score.id,
+      pageCount: score.pagesCount || 1,
+      status: score.recognitionStatus === 'completed' ? 'Ready' : score.recognitionStatus === 'failed' ? 'Failed' : 'Processing'
     };
     this.saveLibraryItems([newLibItem, ...libItems.filter(i => i.originalRefId !== score.id)]);
   },
@@ -191,37 +167,6 @@ export const storageService = {
 
     const libItems = this.getLibraryItems();
     this.saveLibraryItems(libItems.filter(i => i.originalRefId !== scoreId));
-  },
-
-  getStudioProjects(): StudioProject[] {
-    const data = localStorage.getItem(STORAGE_KEYS.STUDIO);
-    if (!data) return [DEMO_STUDIO_PROJECT];
-    try {
-      return JSON.parse(data);
-    } catch {
-      return [DEMO_STUDIO_PROJECT];
-    }
-  },
-
-  saveStudioProject(project: StudioProject): void {
-    const current = this.getStudioProjects();
-    const updated = [project, ...current.filter(p => p.id !== project.id)];
-    localStorage.setItem(STORAGE_KEYS.STUDIO, JSON.stringify(updated));
-
-    // Update library
-    const libItems = this.getLibraryItems();
-    const newLibItem: LibraryItem = {
-      id: `lib-${project.id}`,
-      title: project.title,
-      type: 'studio',
-      subtitle: `${project.tracks.length} Tracks • Studio Production`,
-      meta: `${project.bpm} BPM • ${project.key}`,
-      tags: ['Studio', 'Production', `${project.tracks.length} Tracks`],
-      favorite: false,
-      date: 'Just now',
-      originalRefId: project.id
-    };
-    this.saveLibraryItems([newLibItem, ...libItems.filter(i => i.originalRefId !== project.id)]);
   },
 
   getSettings(): MusiqSettings {

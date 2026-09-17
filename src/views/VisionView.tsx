@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Camera, Upload, Sliders, Eye, FileText, ChevronLeft, ChevronRight, 
-  RotateCcw, AlertTriangle, CheckCircle2, Download, ArrowLeft, RefreshCw, 
-  Layers, Music, Info, XCircle
+  Camera, Upload, Eye, FileText, ChevronLeft, ChevronRight, 
+  RotateCcw, CheckCircle2, Download, ArrowLeft, RefreshCw, 
+  Music, XCircle
 } from 'lucide-react';
-import { ScoreProject, StudioProject } from '../types';
+import { ScoreProject } from '../types';
 import { omrService, OMRJobProgress, OMRHealthStatus } from '../services/omrService';
 import { storageService } from '../services/storageService';
 import { Button } from '../components/common/Button';
@@ -15,14 +15,12 @@ import { ExportModal } from '../components/notation/ExportModal';
 interface VisionViewProps {
   currentScore: ScoreProject | null;
   onScoreTranscribed: (score: ScoreProject) => void;
-  onOpenInStudio: (project: StudioProject) => void;
   isPaperMode?: boolean;
 }
 
 export const VisionView: React.FC<VisionViewProps> = ({
   currentScore,
   onScoreTranscribed,
-  onOpenInStudio,
   isPaperMode = false
 }) => {
   // Score state: null = blank state
@@ -114,7 +112,6 @@ export const VisionView: React.FC<VisionViewProps> = ({
 
     setUploadedFile(file);
     const isXml = file.name.endsWith('.xml') || file.name.endsWith('.musicxml');
-    const isMxl = file.name.endsWith('.mxl');
 
     if (isXml) {
       // Direct MusicXML upload: parse and load directly
@@ -212,13 +209,6 @@ export const VisionView: React.FC<VisionViewProps> = ({
     setUploadedFile(null);
     setOmrProgress(null);
     setActiveTab('original');
-  };
-
-  const handleOpenStudio = () => {
-    if (!score) return;
-    const studioProject = omrService.convertScoreToStudioProject(score);
-    storageService.saveStudioProject(studioProject);
-    onOpenInStudio(studioProject);
   };
 
   // =========================================================================
@@ -381,24 +371,25 @@ export const VisionView: React.FC<VisionViewProps> = ({
             <XCircle size={28} className="text-[#EF4444] shrink-0 mt-0.5" />
             <div className="space-y-1">
               <h3 className="text-xl font-bold text-[#F4F1EA]">
-                {isUnconnected ? 'Transcription service unavailable.' : "We couldn't transcribe this score."}
+                {isUnconnected ? 'Transcription is temporarily unavailable.' : "We couldn't transcribe this score."}
               </h3>
               <p className="text-sm text-[#9A9AA3]">
                 {isUnconnected 
-                  ? 'OMR service is not connected. The Audiveris optical recognition server is required for document transcription.'
+                  ? 'Please try again later. The transcription service is currently offline or reconnecting.'
                   : score.errorMessage || 'Optical recognition could not extract notation from this file.'}
               </p>
             </div>
           </div>
 
-          {isUnconnected && (
+          {/* Development diagnostics only visible in local dev mode */}
+          {isUnconnected && import.meta.env.DEV && (
             <div className="p-4 bg-[#18181D] border border-[#27272D] rounded-xl text-xs font-mono text-[#F4F1EA] space-y-2">
-              <div className="text-[#67E8F9] font-bold">Running the OMR Server Container:</div>
+              <div className="text-[#67E8F9] font-bold">[Dev Mode] OMR Server Container Setup:</div>
               <pre className="p-2.5 bg-black rounded text-[#A78BFA] overflow-x-auto">
                 cd server && docker compose up --build
               </pre>
               <div className="text-[11px] text-[#9A9AA3]">
-                Once running on port 3001, click "Try Again" to transcribe immediately.
+                Once running on port 3001, click "Try Again" to transcribe.
               </div>
             </div>
           )}
@@ -533,18 +524,6 @@ export const VisionView: React.FC<VisionViewProps> = ({
           >
             Export
           </Button>
-
-          {/* Open in Studio (only if parts exist) */}
-          {score?.parts && score.parts.length > 0 && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Sliders size={14} />}
-              onClick={handleOpenStudio}
-            >
-              Open in Studio
-            </Button>
-          )}
         </div>
       </div>
 

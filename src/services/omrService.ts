@@ -1,4 +1,4 @@
-import { ScoreProject, StudioProject, StudioTrack, MusicalPart, ScoreMeasure, DetectedNote } from '../types';
+import { ScoreProject, MusicalPart, ScoreMeasure, DetectedNote } from '../types';
 
 export interface OMRHealthStatus {
   connected: boolean;
@@ -350,56 +350,6 @@ class OMRService {
       rawMusicXml: xmlString,
       recognitionStatus: 'completed',
       createdAt: new Date().toISOString()
-    };
-  }
-
-  /**
-   * Convert dynamic score project to multi-track studio project
-   */
-  public convertScoreToStudioProject(score: ScoreProject): StudioProject {
-    const tracks: StudioTrack[] = (score.parts || []).map((part, idx) => {
-      const panStep = score.parts.length > 1 ? -0.5 + (idx / (score.parts.length - 1)) : 0;
-      return {
-        id: `trk-${part.id}`,
-        name: `${score.title} — ${part.name}`,
-        type: 'choir',
-        color: part.color,
-        muted: false,
-        soloed: false,
-        volume: 0.85,
-        pan: parseFloat(panStep.toFixed(2)),
-        clips: [
-          {
-            id: `clip-${part.id}-full`,
-            trackId: `trk-${part.id}`,
-            name: `${part.name} (${score.measuresCount} Meas)`,
-            startMeasure: 1,
-            lengthMeasures: score.measuresCount || 4,
-            color: part.color
-          }
-        ]
-      };
-    });
-
-    return {
-      id: `studio-score-${score.id}`,
-      title: `${score.title} (Production Session)`,
-      bpm: score.tempoBpm || 100,
-      key: score.keySignature || 'C Major',
-      timeSignature: score.timeSignature || '4/4',
-      tracks,
-      sourceType: 'vision',
-      sourceId: score.id,
-      updatedAt: new Date().toISOString(),
-      effects: {
-        eqLow: 0,
-        eqMid: 1,
-        eqHigh: 2,
-        reverbMix: 0.3,
-        delayTime: 0.25,
-        delayFeedback: 0.2,
-        compression: 0.3
-      }
     };
   }
 }

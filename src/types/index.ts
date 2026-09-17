@@ -1,8 +1,6 @@
 export type ViewMode = 
   | 'landing' 
   | 'home' 
-  | 'create' 
-  | 'studio' 
   | 'vision' 
   | 'vision-capture' 
   | 'vision-result' 
@@ -14,123 +12,7 @@ export interface User {
   name: string;
   email: string;
   avatarUrl?: string;
-  role: 'Artist' | 'Producer' | 'Musician' | 'Choir / Singer' | 'Student' | 'Composer' | 'Other';
-}
-
-export type GenreType = 
-  | 'Afrobeats' 
-  | 'R&B' 
-  | 'Hip-Hop' 
-  | 'Rap' 
-  | 'Pop' 
-  | 'Amapiano' 
-  | 'Gospel' 
-  | 'Dancehall' 
-  | 'Trap' 
-  | 'Phonk' 
-  | 'Highlife' 
-  | 'Reggae' 
-  | 'Rock' 
-  | 'Jazz' 
-  | 'Classical' 
-  | 'Electronic'
-  | 'Soul';
-
-export type MoodType = 
-  | 'Emotional' 
-  | 'Dark' 
-  | 'Happy' 
-  | 'Romantic' 
-  | 'Energetic' 
-  | 'Melancholic' 
-  | 'Aggressive' 
-  | 'Peaceful' 
-  | 'Inspirational';
-
-export type VoiceType = 
-  | 'Male' 
-  | 'Female' 
-  | 'Duet' 
-  | 'Choir' 
-  | 'Instrumental';
-
-export interface SongSection {
-  id: string;
-  name: string; // 'Intro' | 'Verse 1' | 'Pre-Chorus' | 'Chorus' | 'Verse 2' | 'Bridge' | 'Outro'
-  startTime: number; // in seconds
-  endTime: number;
-  lyrics: string[];
-  chords?: string[];
-}
-
-export interface GeneratedSong {
-  id: string;
-  title: string;
-  prompt: string;
-  genre: GenreType;
-  mood: MoodType;
-  voice: VoiceType;
-  tempo: number;
-  key: string;
-  artworkUrl: string;
-  durationSeconds: number;
-  sections: SongSection[];
-  waveformPeaks: number[];
-  createdAt: string;
-  isFavorite?: boolean;
-}
-
-// Studio Production Types
-export interface ClipNote {
-  pitch: string; // e.g. 'C4'
-  startBeat: number;
-  durationBeats: number;
-  velocity: number;
-}
-
-export interface StudioClip {
-  id: string;
-  trackId: string;
-  name: string;
-  startMeasure: number;
-  lengthMeasures: number;
-  color?: string;
-  notes?: ClipNote[];
-}
-
-export interface StudioTrack {
-  id: string;
-  name: string;
-  type: 'drums' | 'bass' | 'piano' | 'synth' | 'vocals' | 'choir' | 'guitar' | 'strings' | 'brass' | 'samples';
-  color: string;
-  muted: boolean;
-  soloed: boolean;
-  volume: number; // 0 to 1
-  pan: number; // -1 to 1
-  clips: StudioClip[];
-}
-
-export interface StudioEffects {
-  eqLow: number; // -12 to 12 dB
-  eqMid: number;
-  eqHigh: number;
-  reverbMix: number; // 0 to 1
-  delayTime: number; // 0.1 to 1.0s
-  delayFeedback: number; // 0 to 0.9
-  compression: number; // 0 to 1
-}
-
-export interface StudioProject {
-  id: string;
-  title: string;
-  bpm: number;
-  key: string;
-  timeSignature: string;
-  tracks: StudioTrack[];
-  effects: StudioEffects;
-  sourceType?: 'original' | 'create' | 'vision';
-  sourceId?: string;
-  updatedAt: string;
+  role: 'Choir Director' | 'Classical Musician' | 'Music Student' | 'Band Director' | 'Composer' | 'Arranger' | 'Other';
 }
 
 // Vision OMR Score Types
@@ -151,8 +33,8 @@ export interface DetectedNote {
 export interface ScoreMeasure {
   measureNumber: number;
   notes: DetectedNote[];
-  confidence: number; // average confidence for this measure
-  isFlagged?: boolean; // uncertain area flagged for correction
+  confidence: number;
+  isFlagged?: boolean;
   warningReason?: string;
 }
 
@@ -200,15 +82,17 @@ export interface ScoreProject {
   isFavorite?: boolean;
 }
 
-// Library item
+// Transcription Library Item
 export interface LibraryItem {
   id: string;
   title: string;
-  type: 'song' | 'studio' | 'score';
+  type: 'score';
   subtitle: string;
   meta: string;
   tags: string[];
   favorite: boolean;
   date: string;
   originalRefId: string;
+  pageCount?: number;
+  status?: 'Ready' | 'Processing' | 'Failed';
 }

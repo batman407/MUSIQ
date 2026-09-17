@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User as UserIcon, Sliders, Sun, Moon, Volume2, Database, RefreshCw, Check } from 'lucide-react';
+import { Sun, Volume2, Database, RefreshCw } from 'lucide-react';
 import { storageService, MusiqSettings } from '../services/storageService';
 import { audioEngine, SynthInstrument } from '../services/audioEngine';
 import { Button } from '../components/common/Button';
@@ -17,7 +17,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [settings, setSettings] = useState<MusiqSettings>(storageService.getSettings());
   const [masterVolume, setMasterVolume] = useState<number>(0.8);
-  const [savedSuccess, setSavedSuccess] = useState(false);
 
   const handleInstrumentChange = (inst: SynthInstrument) => {
     const updated = { ...settings, defaultInstrument: inst };
@@ -34,7 +33,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleResetData = () => {
-    if (window.confirm('Reset all demo songs, scores, and projects to factory defaults?')) {
+    if (window.confirm('Clear all saved transcription scores and preferences?')) {
       localStorage.clear();
       window.location.reload();
     }

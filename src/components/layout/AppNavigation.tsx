@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Sparkles, Sliders, Eye, Library, Settings, ChevronLeft, ChevronRight, User } from 'lucide-react';
+import { Home, Eye, Library, Settings, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { ViewMode } from '../../types';
 import { MusiqMark } from '../brand/MusiqLogo';
 
@@ -20,9 +20,7 @@ export const AppNavigation: React.FC<AppNavigationProps> = ({
 }) => {
   const navItems: { id: ViewMode; label: string; icon: React.FC<{ size?: number; className?: string }> }[] = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'create', label: 'Create', icon: Sparkles },
-    { id: 'studio', label: 'Studio', icon: Sliders },
-    { id: 'vision', label: 'Vision', icon: Eye },
+    { id: 'vision', label: 'Transcribe', icon: Eye },
     { id: 'library', label: 'Library', icon: Library }
   ];
 
