@@ -1,8 +1,8 @@
 services:
   omr-backend:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: server/Dockerfile
     ports:
       - "${PORT:-3001}:${PORT:-3001}"
     environment:

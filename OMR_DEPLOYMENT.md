@@ -47,15 +47,17 @@ Production deployment guide for the Audiveris Optical Music Recognition backend.
 
 1. Push the MUSIQ repo to GitHub
 2. Railway Dashboard → **New Project** → **Deploy from GitHub**
-3. Set **Root Directory** to `/server`
-4. Railway auto-detects `server/Dockerfile`
-5. Set Environment Variables:
+3. In **Settings** → **Build**:
+   - **Builder**: `Dockerfile`
+   - **Dockerfile Path**: `/server/Dockerfile`
+   - **Custom Start Command**: *(leave EMPTY — Dockerfile uses `node index.js`)*
+4. In **Settings** → **Variables**:
    ```
    CORS_ORIGIN=https://musiq-sooty.vercel.app
    JAVA_TOOL_OPTIONS=-Djava.awt.headless=true
    ```
-6. Generate public domain
-7. Verify: `curl https://<domain>/health`
+5. Generate public domain (or link custom domain)
+6. Verify: `curl https://<domain>/health`
 
 ---
 

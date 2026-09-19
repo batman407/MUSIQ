@@ -1,0 +1,13 @@
+# Docker build ignore for MUSIQ OMR Backend
+node_modules
+.git
+.gitignore
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+src
+public
+*.md

@@ -45,13 +45,26 @@ ENV AUDIVERIS_BIN=/usr/local/bin/audiveris
 
 # Setup MUSIQ OMR Server
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
 
-COPY . .
+# Copy server package manifests from repository root build context (server/package*.json)
+COPY server/package*.json ./
 
-# Create required directories
+# Install production dependencies
+RUN npm ci --omit=dev || npm install --production
+
+# Copy server application source files into /app
+COPY server/index.js server/supabase.js ./
+COPY server/schema.sql ./
+
+# Create required directories for uploads and jobs
 RUN mkdir -p /app/uploads /app/jobs
+
+# Build-time verification: fail the build immediately if required files are missing
+RUN test -f /app/index.js \
+    && test -f /app/package.json \
+    && test -f /app/supabase.js \
+    && test -d /app/node_modules \
+    && echo "=== Backend runtime files verified in /app ==="
 
 # Use dynamic PORT — cloud hosts (Railway, Render, Fly.io) inject PORT
 EXPOSE ${PORT}
@@ -61,3 +74,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
 CMD ["node", "index.js"]
+

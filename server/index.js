@@ -770,7 +770,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Start Server
 // ============================================================
 
-server = app.listen(PORT, () => {
+server = app.listen(PORT, '0.0.0.0', () => {
   log('info', `MUSIQ OMR Server started`, {
     port: PORT,
     environment: NODE_ENV,
