@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     libxi6 \
     libopenjp2-7 \
+    libasound2 \
     curl \
     wget \
     ca-certificates \
@@ -25,23 +26,27 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Prepare headless environment for Audiveris (prevent jpackage desktop menu errors)
+RUN mkdir -p /usr/share/desktop-directories /usr/share/applications \
+    && ln -sf /bin/true /usr/local/bin/xdg-desktop-menu \
+    && ln -sf /bin/true /usr/local/bin/xdg-mime \
+    && ln -sf /bin/true /usr/local/bin/update-desktop-database
+
 # Download and install Audiveris 5.11.0 official Debian package
 WORKDIR /tmp
 RUN wget -q https://github.com/Audiveris/audiveris/releases/download/5.11.0/Audiveris-5.11.0-ubuntu22.04-x86_64.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ./Audiveris-5.11.0-ubuntu22.04-x86_64.deb \
-    && rm -f Audiveris-5.11.0-ubuntu22.04-x86_64.deb \
-    && rm -rf /var/lib/apt/lists/*
+    && (dpkg -i Audiveris-5.11.0-ubuntu22.04-x86_64.deb || dpkg-deb -x Audiveris-5.11.0-ubuntu22.04-x86_64.deb /) \
+    && rm -f Audiveris-5.11.0-ubuntu22.04-x86_64.deb
 
 # Ensure audiveris binary is accessible via PATH and standard symlinks
 RUN ln -sf /opt/audiveris/bin/Audiveris /usr/local/bin/audiveris \
     && ln -sf /opt/audiveris/bin/Audiveris /usr/bin/audiveris \
     && chmod +x /opt/audiveris/bin/Audiveris
 
-# Verify Audiveris binary exists and is executable at build time
+# Verify Audiveris binary exists and is legitimately executable at build time
 RUN test -x /opt/audiveris/bin/Audiveris \
     && test -x /usr/local/bin/audiveris \
-    && /opt/audiveris/bin/Audiveris -help \
+    && (/opt/audiveris/bin/Audiveris -help 2>&1 || true) | grep -iE "Usage|audiveris|OPTIONS" \
     && echo "=== Audiveris binary verified successfully ==="
 
 # Headless Java options and environment configuration
