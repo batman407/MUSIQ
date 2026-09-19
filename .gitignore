@@ -23,6 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
+# Environment files (contain secrets)
+.env
+.env.local
+.env.production.local
+server/.env
+
 # Server temporary files
 server/node_modules
 server/uploads

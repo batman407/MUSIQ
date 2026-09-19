@@ -1,203 +1,148 @@
 # MUSIQ OMR Backend Deployment Guide
 
-This guide details how to build, deploy, and connect the production Audiveris Optical Music Recognition (OMR) backend for MUSIQ.
+Production deployment guide for the Audiveris Optical Music Recognition backend.
 
 ---
 
-## 1. Overview & Architecture
+## 1. Architecture
 
-MUSIQ relies on genuine Optical Music Recognition powered by **Audiveris 5.11.0** (with Tesseract OCR). Because Audiveris is a Java desktop/headless application with native dependencies (OpenCV, Tesseract, FreeType), it cannot run in a browser or inside lightweight serverless functions (e.g. AWS Lambda without custom containers, Vercel Serverless).
-
-### Infrastructure Topology
 ```
-[User Browser (MUSIQ SPA)]
-      │
-      │  POST /jobs (Multipart PDF / PNG / JPEG)
-      ▼
-[MUSIQ OMR Backend Container (Node.js + Express)]
-      │
-      │  spawn('audiveris', ['-batch', '-export', '-output', outDir, inputFile])
-      ▼
-[Audiveris 5.11.0 Headless Engine (Java 17 + Tesseract OCR)]
-      │
-      │  Writes .mxl / .musicxml
-      ▼
-[Backend extracts MusicXML string]
-      │
-      │  GET /jobs/:jobId -> { status: 'completed', musicXml: '<score-partwise>...' }
-      ▼
-[OpenSheetMusicDisplay (Client SVG Rendering & Audio Rehearsal)]
+[MUSIQ React SPA — Vercel]
+        │
+        │  POST /jobs (multipart PDF / PNG / JPEG)
+        ▼
+[MUSIQ OMR Backend Container — Railway / Render / Fly.io]
+        │
+        ├─ Supabase (optional): store projects, jobs, results
+        │
+        │  spawn('audiveris', ['-batch', '-export', '-output', outDir, inputFile])
+        ▼
+[Audiveris 5.11.0 Headless — Java 17 + Tesseract OCR]
+        │
+        │  Writes .mxl / .musicxml
+        ▼
+[Backend extracts MusicXML, stores in Supabase Storage]
+        │
+        │  GET /jobs/:id → { status: 'completed' }
+        │  GET /jobs/:id/result → { musicXml: '<score-partwise>...' }
+        ▼
+[OpenSheetMusicDisplay — Client SVG Rendering & Audio]
 ```
 
 ---
 
-## 2. Resource & Hardware Requirements
+## 2. Requirements
 
-| Resource | Minimum | Recommended | Notes |
-| :--- | :--- | :--- | :--- |
-| **RAM** | 2 GB | 4 GB - 8 GB | Multi-page PDFs and high-resolution score scans require significant memory during neural and pixel classification stages. |
-| **vCPU** | 1 vCPU | 2 - 4 vCPU | OMR classification is heavily CPU-bound. 2+ vCPUs ensures single-page transcription finishes within 10–25 seconds. |
-| **Disk** | 10 GB | 20 GB | For container image (~1.2 GB) plus temporary image/PDF processing workspace. |
-| **OS Base** | Ubuntu 22.04 LTS (Jammy) | Ubuntu 22.04 LTS | The official `.deb` release target is Ubuntu 22.04. |
-| **Java** | OpenJDK 17 | Eclipse Temurin 17 | Audiveris 5.11 requires Java 17+. |
-
----
-
-## 3. Environment Variables
-
-### Backend Environment Variables (`/server`)
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `PORT` | `3001` | HTTP port the Express server listens on. |
-| `AUDIVERIS_BIN` | `/usr/local/bin/audiveris` | Absolute path to the Audiveris executable. |
-| `JAVA_TOOL_OPTIONS` | `-Djava.awt.headless=true` | Forces Java AWT into headless mode, preventing X11 GUI errors in Linux containers. |
-| `CORS_ORIGIN` | `*` (or specific frontend URL) | Set to your production frontend domain (e.g. `https://musiq.app`). |
-
-### Frontend Environment Variable (`/`)
-| Variable | Example | Description |
-| :--- | :--- | :--- |
-| `VITE_OMR_API_URL` | `https://omr.musiq.app` | Base URL of the deployed backend. If unset, the frontend defaults to `http://localhost:3001`. |
+| Resource | Minimum | Recommended |
+|:---|:---|:---|
+| RAM | 2 GB | 4-8 GB |
+| vCPU | 1 | 2-4 |
+| Disk | 10 GB | 20 GB |
+| OS | Ubuntu 22.04 | Ubuntu 22.04 |
+| Java | OpenJDK 17 | Eclipse Temurin 17 |
 
 ---
 
-## 4. Deployment Platforms
+## 3. Quick Start — Railway (Recommended)
 
-### Option A: Railway (Recommended - Fastest Setup)
-1. Fork or push the MUSIQ repository to GitHub.
-2. In Railway Dashboard, click **New Project** → **Deploy from GitHub repo**.
-3. Select your repository.
-4. Set **Root Directory** to `/server`.
-5. Railway automatically detects `server/Dockerfile`.
-6. Add Environment Variables:
-   - `PORT`: `3001` (or let Railway assign automatically)
-   - `JAVA_TOOL_OPTIONS`: `-Djava.awt.headless=true`
-7. Under **Settings**, generate a public domain (e.g. `musiq-omr-production.up.railway.app`).
-8. Verify deployment by visiting `https://<your-railway-domain>/health`.
-
----
-
-### Option B: Render (Web Service with Docker)
-1. In Render Dashboard, click **New +** → **Web Service**.
-2. Connect your Git repository.
-3. Select **Docker** as the Runtime.
-4. Set **Root Directory** to `server`.
-5. Choose an instance type with **at least 2 GB RAM** (e.g., Standard or Pro plan).
-6. Set Environment Variables:
-   - `PORT`: `3001`
-   - `JAVA_TOOL_OPTIONS`: `-Djava.awt.headless=true`
-7. Deploy. Your service URL will be `https://<service-name>.onrender.com`.
+1. Push the MUSIQ repo to GitHub
+2. Railway Dashboard → **New Project** → **Deploy from GitHub**
+3. Set **Root Directory** to `/server`
+4. Railway auto-detects `server/Dockerfile`
+5. Set Environment Variables:
+   ```
+   CORS_ORIGIN=https://musiq-sooty.vercel.app
+   JAVA_TOOL_OPTIONS=-Djava.awt.headless=true
+   ```
+6. Generate public domain
+7. Verify: `curl https://<domain>/health`
 
 ---
 
-### Option C: Google Cloud Run
-Cloud Run runs container images serverlessly with full control over memory and CPU:
+## 4. Other Platforms
+
+### Render
+- New Web Service → Docker runtime → root dir `server`
+- Minimum 2GB RAM instance (Standard plan or higher)
+
+### Fly.io
 ```bash
-# 1. Build and push the image to Google Artifact Registry
-docker build -t gcr.io/[PROJECT_ID]/musiq-omr:latest ./server
-docker push gcr.io/[PROJECT_ID]/musiq-omr:latest
+cd server
+fly launch
+# In fly.toml, set memory=4096mb, cpus=2
+fly deploy
+```
 
-# 2. Deploy to Cloud Run with 4GB memory and 2 vCPUs
+### Google Cloud Run
+```bash
+docker build -t gcr.io/[PROJECT]/musiq-omr:latest ./server
+docker push gcr.io/[PROJECT]/musiq-omr:latest
 gcloud run deploy musiq-omr \
-  --image gcr.io/[PROJECT_ID]/musiq-omr:latest \
-  --platform managed \
-  --region us-central1 \
-  --memory 4Gi \
-  --cpu 2 \
-  --timeout 300 \
+  --image gcr.io/[PROJECT]/musiq-omr:latest \
+  --memory 4Gi --cpu 2 --timeout 300 \
   --set-env-vars JAVA_TOOL_OPTIONS="-Djava.awt.headless=true" \
   --allow-unauthenticated
 ```
 
 ---
 
-### Option D: Fly.io
-1. Install `flyctl` and navigate to the `server` directory:
-   ```bash
-   cd server
-   fly launch
-   ```
-2. In `fly.toml`, ensure VM memory is allocated:
-   ```toml
-   [vm]
-     memory = "4096mb"
-     cpus = 2
-     cpu_kind = "shared"
-   ```
-3. Deploy:
-   ```bash
-   fly deploy
-   ```
-
----
-
 ## 5. Local Docker Testing
-
-If Docker is installed on your development machine, test the container locally:
 
 ```bash
 cd server
 docker build -t musiq-omr-server .
-docker run -p 3001:3001 -e JAVA_TOOL_OPTIONS="-Djava.awt.headless=true" musiq-omr-server
+docker run -p 3001:3001 \
+  -e JAVA_TOOL_OPTIONS="-Djava.awt.headless=true" \
+  musiq-omr-server
+
+# Health check
+curl http://localhost:3001/health
+
+# Submit a score
+curl -X POST http://localhost:3001/jobs -F "file=@test_score.pdf"
+
+# Poll status
+curl http://localhost:3001/jobs/<jobId>
+
+# Get result
+curl http://localhost:3001/jobs/<jobId>/result
 ```
 
 ---
 
-## 6. Verification and Health Check
+## 6. Connect Frontend to Backend
 
-### Health Check Endpoint: `GET /health`
-```bash
-curl https://<YOUR_OMR_URL>/health
+In **Vercel Dashboard** → Environment Variables:
 ```
-Expected healthy JSON response:
-```json
-{
-  "status": "ok",
-  "service": "musiq-omr-backend",
-  "engine": "Audiveris",
-  "audiverisAvailable": true,
-  "audiverisVersion": "5.11.0",
-  "timestamp": "2026-09-17T01:30:00.000Z"
-}
+VITE_OMR_API_URL=https://YOUR_DEPLOYED_OMR_URL
 ```
 
-### Job Submission Test: `POST /jobs`
-```bash
-curl -X POST https://<YOUR_OMR_URL>/jobs \
-  -F "file=@test_score.png"
-```
-Expected response:
-```json
-{
-  "jobId": "f7d23a10-e018-498b-b789-...",
-  "status": "uploaded"
-}
-```
-
-### Job Status Query: `GET /jobs/:jobId`
-```bash
-curl https://<YOUR_OMR_URL>/jobs/f7d23a10-e018-498b-b789-...
-```
-Expected response when complete:
-```json
-{
-  "id": "f7d23a10-e018-498b-b789-...",
-  "originalFilename": "test_score.png",
-  "status": "completed",
-  "progress": 100,
-  "stageMessage": "OMR transcription complete",
-  "musicXml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<score-partwise version=\"3.1\">...",
-  "error": null
-}
-```
+Redeploy the frontend after setting this variable.
 
 ---
 
-## 7. Connecting Frontend to Backend
+## 7. Environment Variables Reference
 
-In your frontend host (Vercel, Netlify, Cloudflare Pages, etc.):
-1. Add environment variable:
-   ```env
-   VITE_OMR_API_URL=https://<YOUR_OMR_URL>
+See [`server/.env.example`](server/.env.example) for the complete list.
+
+Key variables:
+| Variable | Default | Description |
+|:---|:---|:---|
+| `PORT` | `3001` | Server port |
+| `CORS_ORIGIN` | `*` | Production frontend URL |
+| `SUPABASE_URL` | *(optional)* | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | *(optional)* | Server-only Supabase key |
+| `MAX_CONCURRENT_JOBS` | `3` | Concurrent OMR processes |
+
+---
+
+## 8. Supabase Setup (Optional)
+
+1. Create a Supabase project at [supabase.com](https://supabase.com)
+2. Run [`server/schema.sql`](server/schema.sql) in the SQL Editor
+3. Create storage buckets: `original-scores` (private), `transcriptions` (private)
+4. Set env vars on your backend host:
    ```
-2. Redeploy the frontend.
-3. Open MUSIQ in your browser, upload any score image or PDF. The application will post directly to your deployed OMR engine and stream real-time progress.
+   SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=eyJ...
+   ```
