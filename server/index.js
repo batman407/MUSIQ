@@ -3,7 +3,7 @@ import cors from 'cors';
 import multer from 'multer';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { spawn, execSync } from 'child_process';
+import { spawn, spawnSync, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -145,52 +145,108 @@ let resolvedAudiverisBin = null;
 let audiverisAvailable = false;
 let audiverisVersion = 'unknown';
 
+let detectionDiagnostics = {
+  command: null,
+  exitCode: null,
+  stdout: '',
+  stderr: '',
+  executablePath: null,
+  verified: false,
+  checkedAt: null
+};
+
 function detectAudiveris() {
   detectJava();
 
   for (const binPath of AUDIVERIS_CANDIDATES) {
-    try {
-      if (path.isAbsolute(binPath) && !fs.existsSync(binPath)) {
-        continue;
-      }
+    if (path.isAbsolute(binPath) && !fs.existsSync(binPath)) {
+      continue;
+    }
 
-      const helpOutput = execSync(`"${binPath}" -help`, {
+    try {
+      // Use spawnSync to directly execute without shell wrapping
+      const res = spawnSync(binPath, ['-help'], {
         encoding: 'utf-8',
         timeout: 15000,
-        stdio: ['pipe', 'pipe', 'pipe']
+        env: {
+          ...process.env,
+          HOME: process.env.HOME || '/root',
+          JAVA_TOOL_OPTIONS: process.env.JAVA_TOOL_OPTIONS || '-Djava.awt.headless=true'
+        }
       });
 
-      resolvedAudiverisBin = binPath;
-      audiverisAvailable = true;
-      const versionMatch = helpOutput.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
-        || helpOutput.match(/(\d+\.\d+\.\d+)/);
-      audiverisVersion = versionMatch ? versionMatch[1] : '5.11.0';
-      log('info', `Audiveris verified at ${binPath}: v${audiverisVersion}`);
-      return;
-    } catch (err) {
-      const output = ((err.stdout || '') + (err.stderr || '')).toString();
-      // DO NOT accept "not found", "No such file", or ENOENT as a valid detection!
-      if (output.includes('not found') || output.includes('No such file') || output.includes('ENOENT')) {
+      if (res.error) {
+        log('warn', `Candidate ${binPath} spawn error: ${res.error.code || res.error.message}`);
         continue;
       }
 
-      // Audiveris -help may exit 1 on some builds but still output help text
-      if (output.match(/[Aa]udiveris\s+(\d+\.\d+)/i) || output.includes('Audiveris') || output.includes('Usage:')) {
+      const stdout = (res.stdout || '').toString();
+      const stderr = (res.stderr || '').toString();
+      const combined = stdout + '\n' + stderr;
+
+      // Legitimate verification: must contain genuine Audiveris CLI usage or options
+      const hasAudiverisIdentifier =
+        combined.includes('Usage: audiveris') ||
+        combined.includes('Usage: Audiveris') ||
+        combined.includes('[-batch]') ||
+        combined.includes('-export') ||
+        combined.includes('org.audiveris') ||
+        (combined.toLowerCase().includes('audiveris') && (combined.includes('OPTIONS') || combined.includes('-output')));
+
+      if (hasAudiverisIdentifier) {
         resolvedAudiverisBin = binPath;
         audiverisAvailable = true;
-        const versionMatch = output.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
-          || output.match(/(\d+\.\d+\.\d+)/);
+
+        const versionMatch = combined.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
+          || combined.match(/version\s+(\d+\.\d+(?:\.\d+)?)/i)
+          || combined.match(/(\d+\.\d+\.\d+)/);
+
         audiverisVersion = versionMatch ? versionMatch[1] : '5.11.0';
-        log('info', `Audiveris verified (non-zero exit) at ${binPath}: v${audiverisVersion}`);
+
+        detectionDiagnostics = {
+          command: `${binPath} -help`,
+          exitCode: res.status,
+          stdout: stdout.slice(0, 1000).trim(),
+          stderr: stderr.slice(0, 1000).trim(),
+          executablePath: binPath,
+          verified: true,
+          checkedAt: new Date().toISOString()
+        };
+
+        log('info', `Audiveris legitimately verified at ${binPath}`, {
+          version: audiverisVersion,
+          exitCode: res.status,
+          stdoutLength: stdout.length,
+          stderrLength: stderr.length
+        });
         return;
+      } else {
+        log('warn', `Binary at ${binPath} executed but output did not match genuine Audiveris CLI syntax`, {
+          exitCode: res.status,
+          stdoutSample: stdout.slice(0, 200),
+          stderrSample: stderr.slice(0, 200)
+        });
       }
+    } catch (err) {
+      log('warn', `Unexpected error testing ${binPath}: ${err.message}`);
     }
   }
 
   resolvedAudiverisBin = null;
   audiverisAvailable = false;
   audiverisVersion = 'not found';
-  log('warn', 'Audiveris binary not found in any candidate path', { candidates: AUDIVERIS_CANDIDATES });
+  detectionDiagnostics = {
+    command: 'none',
+    exitCode: null,
+    stdout: '',
+    stderr: '',
+    executablePath: null,
+    verified: false,
+    checkedAt: new Date().toISOString()
+  };
+  log('warn', 'Audiveris binary could not be legitimately verified in any candidate path', {
+    candidates: AUDIVERIS_CANDIDATES
+  });
 }
 
 detectAudiveris();
@@ -384,6 +440,15 @@ app.get('/health', (req, res) => {
     audiverisPath: resolvedAudiverisBin || 'none',
     javaAvailable,
     javaVersion,
+    diagnostics: {
+      command: detectionDiagnostics.command,
+      exitCode: detectionDiagnostics.exitCode,
+      executablePath: detectionDiagnostics.executablePath,
+      verified: detectionDiagnostics.verified,
+      stdoutSample: detectionDiagnostics.stdout ? detectionDiagnostics.stdout.slice(0, 200) : '',
+      stderrSample: detectionDiagnostics.stderr ? detectionDiagnostics.stderr.slice(0, 200) : '',
+      checkedAt: detectionDiagnostics.checkedAt
+    },
     supabaseConnected: isSupabaseEnabled(),
     activeJobs: activeJobCount,
     maxConcurrentJobs: MAX_CONCURRENT_JOBS,
