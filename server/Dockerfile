@@ -28,20 +28,29 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Download and install Audiveris 5.11.0 official Debian package
 WORKDIR /tmp
 RUN wget -q https://github.com/Audiveris/audiveris/releases/download/5.11.0/Audiveris-5.11.0-ubuntu22.04-x86_64.deb \
-    && (dpkg -i Audiveris-5.11.0-ubuntu22.04-x86_64.deb || apt-get install -f -y) \
-    && rm -f Audiveris-5.11.0-ubuntu22.04-x86_64.deb
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ./Audiveris-5.11.0-ubuntu22.04-x86_64.deb \
+    && rm -f Audiveris-5.11.0-ubuntu22.04-x86_64.deb \
+    && rm -rf /var/lib/apt/lists/*
 
-# Ensure audiveris binary is symlinked to /usr/local/bin/audiveris
-RUN which audiveris || find / -name "audiveris" -o -name "Audiveris" 2>/dev/null | grep -i bin | head -n 1 | xargs -I {} ln -sf {} /usr/local/bin/audiveris
+# Ensure audiveris binary is accessible via PATH and standard symlinks
+RUN ln -sf /opt/audiveris/bin/Audiveris /usr/local/bin/audiveris \
+    && ln -sf /opt/audiveris/bin/Audiveris /usr/bin/audiveris \
+    && chmod +x /opt/audiveris/bin/Audiveris
 
-# Verify Audiveris is actually callable (fail the build if not)
-RUN audiveris -help 2>&1 | head -5 && echo "=== Audiveris verified ==="
+# Verify Audiveris binary exists and is executable at build time
+RUN test -x /opt/audiveris/bin/Audiveris \
+    && test -x /usr/local/bin/audiveris \
+    && /opt/audiveris/bin/Audiveris -help \
+    && echo "=== Audiveris binary verified successfully ==="
 
-# Headless Java options to prevent X11 display errors in container batch mode
+# Headless Java options and environment configuration
 ENV JAVA_TOOL_OPTIONS="-Djava.awt.headless=true"
+ENV PATH="/opt/audiveris/bin:${PATH}"
+ENV AUDIVERIS_BIN=/opt/audiveris/bin/Audiveris
+ENV HOME=/root
 ENV PORT=3001
 ENV NODE_ENV=production
-ENV AUDIVERIS_BIN=/usr/local/bin/audiveris
 
 # Setup MUSIQ OMR Server
 WORKDIR /app

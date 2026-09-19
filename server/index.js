@@ -80,48 +80,6 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(JOBS_DIR, { recursive: true });
 
 // ============================================================
-// Audiveris Detection — uses -help (not -version which doesn't exist)
-// ============================================================
-
-let audiverisAvailable = false;
-let audiverisVersion = 'unknown';
-const AUDIVERIS_BIN = process.env.AUDIVERIS_BIN || 'audiveris';
-
-function detectAudiveris() {
-  try {
-    // Audiveris has no -version flag. -help prints version info and exits.
-    const helpOutput = execSync(`"${AUDIVERIS_BIN}" -help`, {
-      encoding: 'utf-8',
-      timeout: 15000,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    // Parse version from help output — typically contains "Audiveris X.Y.Z" or version number
-    audiverisAvailable = true;
-    const versionMatch = helpOutput.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
-      || helpOutput.match(/(\d+\.\d+\.\d+)/);
-    audiverisVersion = versionMatch ? versionMatch[1] : 'detected';
-    log('info', `Audiveris detected: v${audiverisVersion}`);
-  } catch (err) {
-    // -help may exit with code 1 on some builds but still print version
-    const output = (err.stdout || '') + (err.stderr || '');
-    if (output.toLowerCase().includes('audiveris') || output.match(/\d+\.\d+/)) {
-      audiverisAvailable = true;
-      const versionMatch = output.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
-        || output.match(/(\d+\.\d+\.\d+)/);
-      audiverisVersion = versionMatch ? versionMatch[1] : 'detected';
-      log('info', `Audiveris detected (from stderr): v${audiverisVersion}`);
-    } else {
-      audiverisAvailable = false;
-      audiverisVersion = 'not found';
-      log('warn', 'Audiveris binary not found. Container deployment required.');
-    }
-  }
-}
-
-detectAudiveris();
-
-// ============================================================
 // Structured Logging
 // ============================================================
 
@@ -141,6 +99,101 @@ function log(level, message, data = {}) {
     console.log(JSON.stringify(entry));
   }
 }
+
+// ============================================================
+// Java & Audiveris Detection
+// ============================================================
+
+let javaAvailable = false;
+let javaVersion = 'unknown';
+
+function detectJava() {
+  try {
+    const javaOutput = execSync('java -version', {
+      encoding: 'utf-8',
+      timeout: 10000,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    javaAvailable = true;
+    const match = javaOutput.match(/version\s+"?([^"\s]+)/i);
+    javaVersion = match ? match[1] : 'detected';
+    log('info', `Java runtime detected: ${javaVersion}`);
+  } catch (err) {
+    const output = ((err.stdout || '') + (err.stderr || '')).toString();
+    if (output.includes('version')) {
+      javaAvailable = true;
+      const match = output.match(/version\s+"?([^"\s]+)/i);
+      javaVersion = match ? match[1] : 'detected';
+      log('info', `Java runtime detected (from stderr): ${javaVersion}`);
+    } else {
+      javaAvailable = false;
+      javaVersion = 'not found';
+      log('warn', 'Java runtime not detected');
+    }
+  }
+}
+
+const AUDIVERIS_CANDIDATES = [
+  process.env.AUDIVERIS_BIN,
+  '/opt/audiveris/bin/Audiveris',
+  '/usr/local/bin/audiveris',
+  '/usr/bin/audiveris',
+  'audiveris'
+].filter(Boolean);
+
+let resolvedAudiverisBin = null;
+let audiverisAvailable = false;
+let audiverisVersion = 'unknown';
+
+function detectAudiveris() {
+  detectJava();
+
+  for (const binPath of AUDIVERIS_CANDIDATES) {
+    try {
+      if (path.isAbsolute(binPath) && !fs.existsSync(binPath)) {
+        continue;
+      }
+
+      const helpOutput = execSync(`"${binPath}" -help`, {
+        encoding: 'utf-8',
+        timeout: 15000,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      resolvedAudiverisBin = binPath;
+      audiverisAvailable = true;
+      const versionMatch = helpOutput.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
+        || helpOutput.match(/(\d+\.\d+\.\d+)/);
+      audiverisVersion = versionMatch ? versionMatch[1] : '5.11.0';
+      log('info', `Audiveris verified at ${binPath}: v${audiverisVersion}`);
+      return;
+    } catch (err) {
+      const output = ((err.stdout || '') + (err.stderr || '')).toString();
+      // DO NOT accept "not found", "No such file", or ENOENT as a valid detection!
+      if (output.includes('not found') || output.includes('No such file') || output.includes('ENOENT')) {
+        continue;
+      }
+
+      // Audiveris -help may exit 1 on some builds but still output help text
+      if (output.match(/[Aa]udiveris\s+(\d+\.\d+)/i) || output.includes('Audiveris') || output.includes('Usage:')) {
+        resolvedAudiverisBin = binPath;
+        audiverisAvailable = true;
+        const versionMatch = output.match(/[Aa]udiveris\s+(\d+\.\d+(?:\.\d+)?)/i)
+          || output.match(/(\d+\.\d+\.\d+)/);
+        audiverisVersion = versionMatch ? versionMatch[1] : '5.11.0';
+        log('info', `Audiveris verified (non-zero exit) at ${binPath}: v${audiverisVersion}`);
+        return;
+      }
+    }
+  }
+
+  resolvedAudiverisBin = null;
+  audiverisAvailable = false;
+  audiverisVersion = 'not found';
+  log('warn', 'Audiveris binary not found in any candidate path', { candidates: AUDIVERIS_CANDIDATES });
+}
+
+detectAudiveris();
 
 // ============================================================
 // In-Memory Job Store
@@ -328,6 +381,9 @@ app.get('/health', (req, res) => {
     omr: 'audiveris',
     audiverisAvailable,
     audiverisVersion,
+    audiverisPath: resolvedAudiverisBin || 'none',
+    javaAvailable,
+    javaVersion,
     supabaseConnected: isSupabaseEnabled(),
     activeJobs: activeJobCount,
     maxConcurrentJobs: MAX_CONCURRENT_JOBS,
@@ -498,6 +554,49 @@ function startAudiverisJob(jobRecord) {
   jobRecord.stageMessage = 'Audiveris OMR engine processing...';
   jobRecord.updatedAt = new Date().toISOString();
 
+  // 1. Verify input file exists, is non-empty, and readable
+  if (!fs.existsSync(jobRecord.inputFilePath)) {
+    activeJobCount = Math.max(0, activeJobCount - 1);
+    jobRecord.status = 'failed';
+    jobRecord.error = `Input file not found at ${jobRecord.inputFilePath}`;
+    jobRecord.stageMessage = 'Input file missing';
+    log('error', `Input file missing for job ${jobRecord.id}`, { path: jobRecord.inputFilePath });
+    return;
+  }
+
+  let inputStats;
+  try {
+    inputStats = fs.statSync(jobRecord.inputFilePath);
+    if (inputStats.size === 0) {
+      activeJobCount = Math.max(0, activeJobCount - 1);
+      jobRecord.status = 'failed';
+      jobRecord.error = 'Input file is empty (0 bytes)';
+      jobRecord.stageMessage = 'Input file empty';
+      log('error', `Input file empty for job ${jobRecord.id}`, { path: jobRecord.inputFilePath });
+      return;
+    }
+  } catch (statErr) {
+    activeJobCount = Math.max(0, activeJobCount - 1);
+    jobRecord.status = 'failed';
+    jobRecord.error = `Cannot read input file: ${statErr.message}`;
+    jobRecord.stageMessage = 'Input file unreadable';
+    return;
+  }
+
+  // 2. Ensure output directory exists and is writable
+  try {
+    fs.mkdirSync(jobRecord.outputDir, { recursive: true });
+  } catch (dirErr) {
+    activeJobCount = Math.max(0, activeJobCount - 1);
+    jobRecord.status = 'failed';
+    jobRecord.error = `Cannot create output directory: ${dirErr.message}`;
+    jobRecord.stageMessage = 'Output directory error';
+    return;
+  }
+
+  // Determine binary to execute
+  const execBin = resolvedAudiverisBin || process.env.AUDIVERIS_BIN || 'audiveris';
+
   // Update Supabase if connected
   if (jobRecord.supabaseJobId) {
     updateTranscriptionJob(jobRecord.supabaseJobId, {
@@ -506,18 +605,54 @@ function startAudiverisJob(jobRecord) {
     }).catch(() => {});
   }
 
-  log('info', `Starting Audiveris for job ${jobRecord.id}`);
+  log('info', `Starting Audiveris execution for job ${jobRecord.id}`, {
+    jobId: jobRecord.id,
+    binary: execBin,
+    inputPath: jobRecord.inputFilePath,
+    inputSize: inputStats.size,
+    outputDir: jobRecord.outputDir
+  });
 
-  // Spawn Audiveris with argument array — NO shell interpolation
-  const child = spawn(AUDIVERIS_BIN, [
+  // Spawn Audiveris with standard batch arguments
+  // Audiveris syntax: -batch -export -output <dir> -- <file>
+  const args = [
     '-batch',
     '-export',
     '-output', jobRecord.outputDir,
+    '--',
     jobRecord.inputFilePath
-  ], {
-    // Do NOT use shell: true — prevents command injection
+  ];
+
+  let spawnError = null;
+  let processStarted = false;
+
+  const child = spawn(execBin, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: 300000 // 5 minute timeout
+    timeout: 300000, // 5 minute timeout
+    env: {
+      ...process.env,
+      HOME: process.env.HOME || '/root',
+      JAVA_TOOL_OPTIONS: process.env.JAVA_TOOL_OPTIONS || '-Djava.awt.headless=true'
+    }
+  });
+
+  child.on('spawn', () => {
+    processStarted = true;
+    log('info', `Audiveris process spawned successfully for job ${jobRecord.id}`, {
+      pid: child.pid,
+      binary: execBin
+    });
+  });
+
+  child.on('error', (err) => {
+    spawnError = err;
+    log('error', `Audiveris process spawn failed for job ${jobRecord.id}`, {
+      code: err.code,
+      errno: err.errno,
+      syscall: err.syscall,
+      path: err.path,
+      message: err.message
+    });
   });
 
   let stdoutLog = '';
@@ -548,24 +683,48 @@ function startAudiverisJob(jobRecord) {
   child.stderr.on('data', (data) => {
     const text = data.toString();
     stderrLog += text;
-    // Audiveris logs a lot to stderr — this is normal Java behavior
     log('info', `[Audiveris stderr] ${jobRecord.id}`, { output: text.trim() });
   });
 
-  child.on('close', async (code) => {
+  child.on('close', async (code, signal) => {
     activeJobCount = Math.max(0, activeJobCount - 1);
     jobRecord.updatedAt = new Date().toISOString();
 
-    log('info', `Audiveris exited for job ${jobRecord.id}`, { exitCode: code });
+    log('info', `Audiveris process finished for job ${jobRecord.id}`, {
+      exitCode: code,
+      signal,
+      processStarted,
+      spawnError: spawnError ? spawnError.message : null,
+      stdoutBytes: stdoutLog.length,
+      stderrBytes: stderrLog.length
+    });
+
+    // Handle spawn failure (e.g. ENOENT, EACCES)
+    if (spawnError) {
+      jobRecord.status = 'failed';
+      jobRecord.error = `Audiveris failed to start: ${spawnError.code || spawnError.message} (path: ${execBin})`;
+      jobRecord.stageMessage = 'Process start failed';
+
+      if (jobRecord.supabaseJobId) {
+        await updateTranscriptionJob(jobRecord.supabaseJobId, {
+          status: 'failed',
+          error_code: spawnError.code || 'SPAWN_ERROR',
+          error_message: jobRecord.error,
+          completed_at: new Date().toISOString()
+        }).catch(() => {});
+      }
+      cleanupFile(jobRecord.inputFilePath);
+      return;
+    }
 
     if (code !== 0 && code !== null) {
-      // Audiveris can exit non-zero but still produce output
       // Check for output first before declaring failure
       const outputFiles = findOutputFiles(jobRecord.outputDir);
 
       if (!outputFiles.mxl && !outputFiles.xml) {
         jobRecord.status = 'failed';
-        jobRecord.error = `Audiveris exited with code ${code}. No MusicXML output produced.`;
+        const recentStderr = stderrLog.slice(-500).trim();
+        jobRecord.error = `Audiveris exited with code ${code}.${recentStderr ? ' Stderr: ' + recentStderr : ' No MusicXML output produced.'}`;
         jobRecord.stageMessage = 'Recognition failed';
 
         if (jobRecord.supabaseJobId) {
@@ -580,11 +739,9 @@ function startAudiverisJob(jobRecord) {
           await updateScoreProjectStatus(jobRecord.supabaseProjectId, 'failed').catch(() => {});
         }
 
-        // Cleanup input file (keep output dir briefly for debugging)
         cleanupFile(jobRecord.inputFilePath);
         return;
       }
-      // Fall through — output exists despite non-zero exit
     }
 
     // Locate generated output files — recursively search subdirectories
