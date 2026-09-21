@@ -55,9 +55,12 @@ Production deployment guide for the Audiveris Optical Music Recognition backend.
    ```
    CORS_ORIGIN=https://musiq-sooty.vercel.app
    JAVA_TOOL_OPTIONS=-Djava.awt.headless=true
+   SUPABASE_URL=https://<your-project-id>.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=eyJ... (secret service_role key - NEVER expose in frontend)
    ```
 5. Generate public domain (or link custom domain)
 6. Verify: `curl https://<domain>/health`
+   (Should report `"supabaseConnected": true` and `"audiverisAvailable": true`)
 
 ---
 

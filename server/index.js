@@ -13,10 +13,15 @@ import {
   isSupabaseEnabled,
   createScoreProject,
   updateScoreProjectStatus,
+  updateScoreProjectStoragePath,
   createTranscriptionJob,
   updateTranscriptionJob,
+  getTranscriptionJob,
   createTranscriptionResult,
-  uploadToStorage
+  getTranscriptionResult,
+  uploadToStorage,
+  downloadFromStorage,
+  markInterruptedJobsFailed
 } from './supabase.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -498,6 +503,48 @@ app.post('/jobs', upload.single('file'), async (req, res) => {
     const jobOutputDir = path.join(JOBS_DIR, jobId, 'output');
     fs.mkdirSync(jobOutputDir, { recursive: true });
 
+    let scoreProjectId = null;
+
+    // Supabase persistent storage
+    if (isSupabaseEnabled()) {
+      try {
+        const project = await createScoreProject({
+          title: originalFilename.replace(/\.[^/.]+$/, ''),
+          originalFilename,
+          mimeType,
+          fileSize,
+          pageCount: 1
+        });
+
+        if (project) {
+          scoreProjectId = project.id;
+
+          // 1. Upload original file to private Supabase Storage bucket
+          const fileBuffer = fs.readFileSync(inputFilePath);
+          const ext = path.extname(originalFilename).toLowerCase();
+          const storagePath = `scores/${project.id}/original${ext}`;
+          await uploadToStorage('original-scores', storagePath, fileBuffer, mimeType);
+          await updateScoreProjectStoragePath(project.id, storagePath);
+
+          // 2. Persist job metadata using the EXACT client jobId
+          await createTranscriptionJob({
+            id: jobId,
+            scoreProjectId: project.id,
+            status: 'queued',
+            stageMessage: 'Job queued for Audiveris processing'
+          });
+
+          log('info', `Job metadata & original file persisted to Supabase`, {
+            jobId,
+            projectId: project.id,
+            storagePath
+          });
+        }
+      } catch (err) {
+        log('error', 'Supabase persistence error during job creation', { error: err.message });
+      }
+    }
+
     const jobRecord = {
       id: jobId,
       originalFilename,
@@ -511,8 +558,8 @@ app.post('/jobs', upload.single('file'), async (req, res) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       musicXml: null,
-      supabaseProjectId: null,
-      supabaseJobId: null
+      supabaseProjectId: scoreProjectId,
+      supabaseJobId: jobId
     };
 
     jobs.set(jobId, jobRecord);
@@ -521,40 +568,11 @@ app.post('/jobs', upload.single('file'), async (req, res) => {
       jobId,
       filename: originalFilename,
       mimeType,
-      fileSize
+      fileSize,
+      persisted: Boolean(scoreProjectId)
     });
 
-    // Supabase integration (optional — fires and doesn't block response)
-    if (isSupabaseEnabled()) {
-      try {
-        const project = await createScoreProject({
-          title: originalFilename.replace(/\.[^/.]+$/, ''),
-          originalFilename,
-          mimeType,
-          fileSize,
-          pageCount: 1
-        });
-
-        if (project) {
-          jobRecord.supabaseProjectId = project.id;
-
-          // Upload original file to Supabase Storage
-          const fileBuffer = fs.readFileSync(inputFilePath);
-          const ext = path.extname(originalFilename).toLowerCase();
-          const storagePath = `uploads/${project.id}/original${ext}`;
-          await uploadToStorage('original-scores', storagePath, fileBuffer, mimeType);
-
-          const job = await createTranscriptionJob(project.id);
-          if (job) {
-            jobRecord.supabaseJobId = job.id;
-          }
-        }
-      } catch (err) {
-        log('warn', 'Supabase integration failed (non-blocking)', { error: err.message });
-      }
-    }
-
-    // Launch Audiveris
+    // Launch Audiveris asynchronously
     startAudiverisJob(jobRecord);
 
     res.status(201).json({
@@ -567,45 +585,109 @@ app.post('/jobs', upload.single('file'), async (req, res) => {
   }
 });
 
-// 3. GET /jobs/:id — Poll job status
-app.get('/jobs/:id', (req, res) => {
-  const job = jobs.get(req.params.id);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
+// 3. GET /jobs/:id — Poll job status (Memory + Supabase fallback)
+app.get('/jobs/:id', async (req, res) => {
+  const jobId = req.params.id;
 
-  res.json({
-    id: job.id,
-    originalFilename: job.originalFilename,
-    status: job.status,
-    stageMessage: job.stageMessage,
-    error: job.error,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt
-  });
-});
-
-// 4. GET /jobs/:id/result — Retrieve completed MusicXML
-app.get('/jobs/:id/result', (req, res) => {
-  const job = jobs.get(req.params.id);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
-
-  if (job.status !== 'completed' || !job.musicXml) {
-    return res.status(400).json({
-      error: 'Job has not completed successfully',
-      status: job.status,
-      detail: job.error || job.stageMessage
+  // 1. Check in-memory active job store
+  const memoryJob = jobs.get(jobId);
+  if (memoryJob) {
+    return res.json({
+      id: memoryJob.id,
+      originalFilename: memoryJob.originalFilename,
+      status: memoryJob.status,
+      stageMessage: memoryJob.stageMessage,
+      error: memoryJob.error,
+      createdAt: memoryJob.createdAt,
+      updatedAt: memoryJob.updatedAt
     });
   }
 
-  res.json({
-    jobId: job.id,
-    originalFilename: job.originalFilename,
-    format: 'musicxml',
-    musicXml: job.musicXml
-  });
+  // 2. Fallback to Supabase persistent PostgreSQL store
+  if (isSupabaseEnabled()) {
+    try {
+      const dbJob = await getTranscriptionJob(jobId);
+      if (dbJob) {
+        return res.json({
+          id: dbJob.id,
+          originalFilename: dbJob.originalFilename,
+          status: dbJob.status,
+          stageMessage: dbJob.stageMessage,
+          error: dbJob.error,
+          createdAt: dbJob.createdAt,
+          updatedAt: dbJob.updatedAt
+        });
+      }
+    } catch (err) {
+      log('warn', `Error querying Supabase for job ${jobId}`, { error: err.message });
+    }
+  }
+
+  return res.status(404).json({ error: 'Job not found' });
+});
+
+// 4. GET /jobs/:id/result — Retrieve completed MusicXML (Memory + Supabase Storage)
+app.get('/jobs/:id/result', async (req, res) => {
+  const jobId = req.params.id;
+
+  // 1. Fast path: check in-memory cache
+  const memoryJob = jobs.get(jobId);
+  if (memoryJob && memoryJob.status === 'completed' && memoryJob.musicXml) {
+    return res.json({
+      jobId: memoryJob.id,
+      originalFilename: memoryJob.originalFilename,
+      format: 'musicxml',
+      musicXml: memoryJob.musicXml
+    });
+  }
+
+  // 2. Persistent path: retrieve metadata and XML from Supabase Storage
+  if (isSupabaseEnabled()) {
+    try {
+      const dbJob = await getTranscriptionJob(jobId);
+      if (!dbJob) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      if (dbJob.status !== 'completed') {
+        return res.status(400).json({
+          error: 'Job has not completed successfully',
+          status: dbJob.status,
+          detail: dbJob.error || dbJob.stageMessage
+        });
+      }
+
+      const result = await getTranscriptionResult(dbJob.scoreProjectId);
+      if (!result || !result.musicxml_storage_path) {
+        return res.status(404).json({ error: 'Transcription result not found for this job' });
+      }
+
+      // Download MusicXML from private Supabase Storage
+      const xmlBuffer = await downloadFromStorage('transcriptions', result.musicxml_storage_path);
+      if (!xmlBuffer) {
+        return res.status(500).json({ error: 'Failed downloading MusicXML result from storage' });
+      }
+
+      const musicXml = xmlBuffer.toString('utf-8');
+
+      // Cache back into memory
+      if (memoryJob) {
+        memoryJob.musicXml = musicXml;
+      }
+
+      return res.json({
+        jobId: dbJob.id,
+        originalFilename: dbJob.originalFilename,
+        format: 'musicxml',
+        musicXml
+      });
+    } catch (err) {
+      log('error', `Failed retrieving result from Supabase for job ${jobId}`, { error: err.message });
+      return res.status(500).json({ error: 'Failed retrieving result from storage' });
+    }
+  }
+
+  return res.status(404).json({ error: 'Job not found' });
 });
 
 // ============================================================
@@ -666,8 +748,12 @@ function startAudiverisJob(jobRecord) {
   if (jobRecord.supabaseJobId) {
     updateTranscriptionJob(jobRecord.supabaseJobId, {
       status: 'processing',
+      stage_message: jobRecord.stageMessage,
       started_at: new Date().toISOString()
     }).catch(() => {});
+  }
+  if (jobRecord.supabaseProjectId) {
+    updateScoreProjectStatus(jobRecord.supabaseProjectId, 'processing').catch(() => {});
   }
 
   log('info', `Starting Audiveris execution for job ${jobRecord.id}`, {
@@ -728,6 +814,7 @@ function startAudiverisJob(jobRecord) {
     stdoutLog += text;
     log('info', `[Audiveris stdout] ${jobRecord.id}`, { output: text.trim() });
 
+    const oldStage = jobRecord.stageMessage;
     // Update stage based on Audiveris output — do NOT fabricate progress
     if (text.includes('Loading') || text.includes('LOAD')) {
       jobRecord.stageMessage = 'Loading score pages...';
@@ -743,6 +830,13 @@ function startAudiverisJob(jobRecord) {
       jobRecord.stageMessage = 'Exporting MusicXML...';
     }
     jobRecord.updatedAt = new Date().toISOString();
+
+    if (jobRecord.stageMessage !== oldStage && jobRecord.supabaseJobId) {
+      updateTranscriptionJob(jobRecord.supabaseJobId, {
+        stage_message: jobRecord.stageMessage,
+        updated_at: jobRecord.updatedAt
+      }).catch(() => {});
+    }
   });
 
   child.stderr.on('data', (data) => {
@@ -773,12 +867,17 @@ function startAudiverisJob(jobRecord) {
       if (jobRecord.supabaseJobId) {
         await updateTranscriptionJob(jobRecord.supabaseJobId, {
           status: 'failed',
+          stage_message: jobRecord.stageMessage,
           error_code: spawnError.code || 'SPAWN_ERROR',
           error_message: jobRecord.error,
           completed_at: new Date().toISOString()
         }).catch(() => {});
       }
+      if (jobRecord.supabaseProjectId) {
+        await updateScoreProjectStatus(jobRecord.supabaseProjectId, 'failed').catch(() => {});
+      }
       cleanupFile(jobRecord.inputFilePath);
+      cleanupDir(jobRecord.outputDir);
       return;
     }
 
@@ -795,6 +894,7 @@ function startAudiverisJob(jobRecord) {
         if (jobRecord.supabaseJobId) {
           await updateTranscriptionJob(jobRecord.supabaseJobId, {
             status: 'failed',
+            stage_message: jobRecord.stageMessage,
             error_code: `EXIT_${code}`,
             error_message: jobRecord.error,
             completed_at: new Date().toISOString()
@@ -805,6 +905,7 @@ function startAudiverisJob(jobRecord) {
         }
 
         cleanupFile(jobRecord.inputFilePath);
+        cleanupDir(jobRecord.outputDir);
         return;
       }
     }
@@ -852,17 +953,17 @@ function startAudiverisJob(jobRecord) {
           xmlLength: musicXml.length
         });
 
-        // Supabase: store result
+        // Supabase: store result in private storage and database
         if (jobRecord.supabaseProjectId) {
           try {
-            // Upload MusicXML to Supabase Storage
+            // Upload MusicXML to private Supabase Storage
             const xmlBuffer = Buffer.from(musicXml, 'utf-8');
             const xmlPath = `results/${jobRecord.supabaseProjectId}/score.musicxml`;
             await uploadToStorage('transcriptions', xmlPath, xmlBuffer, 'application/xml');
 
             // Upload MXL if we have it
             let mxlPath = null;
-            if (outputFiles.mxl) {
+            if (outputFiles.mxl && fs.existsSync(outputFiles.mxl)) {
               const mxlBuffer = fs.readFileSync(outputFiles.mxl);
               mxlPath = `results/${jobRecord.supabaseProjectId}/score.mxl`;
               await uploadToStorage('transcriptions', mxlPath, mxlBuffer, 'application/vnd.recordare.musicxml');
@@ -881,12 +982,13 @@ function startAudiverisJob(jobRecord) {
 
             await updateTranscriptionJob(jobRecord.supabaseJobId, {
               status: 'completed',
+              stage_message: 'Recognition complete',
               completed_at: new Date().toISOString()
             });
 
             await updateScoreProjectStatus(jobRecord.supabaseProjectId, 'completed');
           } catch (err) {
-            log('warn', 'Supabase result storage failed (non-blocking)', { error: err.message });
+            log('error', 'Supabase result storage failed', { error: err.message });
           }
         }
       } else {
@@ -897,6 +999,7 @@ function startAudiverisJob(jobRecord) {
         if (jobRecord.supabaseJobId) {
           await updateTranscriptionJob(jobRecord.supabaseJobId, {
             status: 'failed',
+            stage_message: jobRecord.stageMessage,
             error_code: 'NO_OUTPUT',
             error_message: jobRecord.error,
             completed_at: new Date().toISOString()
@@ -907,8 +1010,9 @@ function startAudiverisJob(jobRecord) {
         }
       }
 
-      // Cleanup input file after processing
+      // Cleanup local files immediately after processing — keep files only for active processing
       cleanupFile(jobRecord.inputFilePath);
+      cleanupDir(jobRecord.outputDir);
 
     } catch (err) {
       jobRecord.status = 'failed';
@@ -917,6 +1021,7 @@ function startAudiverisJob(jobRecord) {
       log('error', `Job ${jobRecord.id} output read failed`, { error: err.message });
 
       cleanupFile(jobRecord.inputFilePath);
+      cleanupDir(jobRecord.outputDir);
     }
   });
 
@@ -930,14 +1035,19 @@ function startAudiverisJob(jobRecord) {
     log('error', `Audiveris spawn failed for job ${jobRecord.id}`, { error: err.message });
 
     cleanupFile(jobRecord.inputFilePath);
+    cleanupDir(jobRecord.outputDir);
 
     if (jobRecord.supabaseJobId) {
       await updateTranscriptionJob(jobRecord.supabaseJobId, {
         status: 'failed',
+        stage_message: jobRecord.stageMessage,
         error_code: 'SPAWN_FAILED',
         error_message: jobRecord.error,
         completed_at: new Date().toISOString()
       }).catch(() => {});
+    }
+    if (jobRecord.supabaseProjectId) {
+      await updateScoreProjectStatus(jobRecord.supabaseProjectId, 'failed').catch(() => {});
     }
   });
 }
@@ -992,10 +1102,11 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Start Server
 // ============================================================
 
-server = app.listen(PORT, '0.0.0.0', () => {
+server = app.listen(PORT, '0.0.0.0', async () => {
   log('info', `MUSIQ OMR Server started`, {
     port: PORT,
     environment: NODE_ENV,
+    nodeVersion: process.version,
     audiverisAvailable,
     audiverisVersion,
     supabaseEnabled: isSupabaseEnabled(),
@@ -1003,4 +1114,9 @@ server = app.listen(PORT, '0.0.0.0', () => {
     maxFileSizeMB: MAX_FILE_SIZE_MB,
     maxConcurrentJobs: MAX_CONCURRENT_JOBS
   });
+
+  // Mark interrupted jobs from prior instance as failed
+  if (isSupabaseEnabled()) {
+    await markInterruptedJobsFailed();
+  }
 });

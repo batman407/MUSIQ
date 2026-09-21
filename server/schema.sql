@@ -1,5 +1,5 @@
 -- ============================================================
--- MUSIQ OMR — Supabase Database Schema
+-- MUSIQ OMR — Supabase Database Schema & Storage Configuration
 -- Run this in the Supabase SQL Editor
 -- ============================================================
 
@@ -35,13 +35,19 @@ CREATE TABLE IF NOT EXISTS transcription_jobs (
     score_project_id    UUID NOT NULL REFERENCES score_projects(id) ON DELETE CASCADE,
     status              TEXT NOT NULL DEFAULT 'queued'
                         CHECK (status IN ('queued','processing','completed','failed')),
+    stage_message       TEXT DEFAULT 'Job queued for Audiveris processing',
     progress_page       INTEGER,
     error_code          TEXT,
     error_message       TEXT,
     started_at          TIMESTAMPTZ,
     completed_at        TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Idempotent migrations for existing deployments:
+ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS stage_message TEXT DEFAULT 'Job queued for Audiveris processing';
+ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- Index for project lookups
 CREATE INDEX IF NOT EXISTS idx_transcription_jobs_project ON transcription_jobs(score_project_id);
@@ -63,7 +69,7 @@ CREATE TABLE IF NOT EXISTS transcription_results (
 CREATE INDEX IF NOT EXISTS idx_transcription_results_project ON transcription_results(score_project_id);
 
 -- ============================================================
--- 4. Row Level Security
+-- 4. Row Level Security (RLS)
 -- ============================================================
 
 -- Enable RLS on all tables
@@ -72,49 +78,41 @@ ALTER TABLE transcription_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transcription_results ENABLE ROW LEVEL SECURITY;
 
 -- score_projects: users can read/write their own rows
-CREATE POLICY "Users can view own score_projects"
-    ON score_projects FOR SELECT
-    USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can insert own score_projects"
-    ON score_projects FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can update own score_projects"
-    ON score_projects FOR UPDATE
-    USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can delete own score_projects"
-    ON score_projects FOR DELETE
-    USING (auth.uid() = user_id);
-
--- Service role bypass — backend uses service_role key which bypasses RLS
--- No explicit policy needed for service role
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can view own score_projects') THEN
+        CREATE POLICY "Users can view own score_projects" ON score_projects FOR SELECT USING (auth.uid() = user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can insert own score_projects') THEN
+        CREATE POLICY "Users can insert own score_projects" ON score_projects FOR INSERT WITH CHECK (auth.uid() = user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can update own score_projects') THEN
+        CREATE POLICY "Users can update own score_projects" ON score_projects FOR UPDATE USING (auth.uid() = user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can delete own score_projects') THEN
+        CREATE POLICY "Users can delete own score_projects" ON score_projects FOR DELETE USING (auth.uid() = user_id);
+    END IF;
+END $$;
 
 -- transcription_jobs: users can view jobs for their own projects
-CREATE POLICY "Users can view own transcription_jobs"
-    ON transcription_jobs FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM score_projects sp
-            WHERE sp.id = transcription_jobs.score_project_id
-            AND sp.user_id = auth.uid()
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can view own transcription_jobs') THEN
+        CREATE POLICY "Users can view own transcription_jobs" ON transcription_jobs FOR SELECT
+        USING (EXISTS (SELECT 1 FROM score_projects sp WHERE sp.id = transcription_jobs.score_project_id AND sp.user_id = auth.uid()));
+    END IF;
+END $$;
 
 -- transcription_results: users can view results for their own projects
-CREATE POLICY "Users can view own transcription_results"
-    ON transcription_results FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM score_projects sp
-            WHERE sp.id = transcription_results.score_project_id
-            AND sp.user_id = auth.uid()
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can view own transcription_results') THEN
+        CREATE POLICY "Users can view own transcription_results" ON transcription_results FOR SELECT
+        USING (EXISTS (SELECT 1 FROM score_projects sp WHERE sp.id = transcription_results.score_project_id AND sp.user_id = auth.uid()));
+    END IF;
+END $$;
+
+-- NOTE: Backend uses SUPABASE_SERVICE_ROLE_KEY which automatically bypasses RLS.
 
 -- ============================================================
--- 5. Updated_at trigger
+-- 5. Automatic updated_at Triggers
 -- ============================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -124,35 +122,38 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_score_projects_updated_at ON score_projects;
 CREATE TRIGGER update_score_projects_updated_at
     BEFORE UPDATE ON score_projects
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- ============================================================
--- 6. Storage Buckets (run separately in Supabase dashboard
---    or via the storage API — SQL bucket creation is informational)
--- ============================================================
--- INSERT INTO storage.buckets (id, name, public)
--- VALUES
---     ('original-scores', 'original-scores', false),
---     ('transcriptions', 'transcriptions', false)
--- ON CONFLICT (id) DO NOTHING;
-
--- Storage policies (apply via Supabase dashboard > Storage > Policies):
---
--- original-scores bucket:
---   SELECT: auth.uid()::text = (storage.foldername(name))[1]
---   INSERT: auth.uid()::text = (storage.foldername(name))[1]
---
--- transcriptions bucket:
---   SELECT: auth.uid()::text = (storage.foldername(name))[1]
---
--- The backend uses the service_role key which bypasses storage RLS.
+DROP TRIGGER IF EXISTS update_transcription_jobs_updated_at ON transcription_jobs;
+CREATE TRIGGER update_transcription_jobs_updated_at
+    BEFORE UPDATE ON transcription_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================
--- Storage paths convention:
---   original-scores/{userId}/{projectId}/original.{ext}
---   transcriptions/{userId}/{projectId}/score.mxl
---   transcriptions/{userId}/{projectId}/score.musicxml
+-- 6. Storage Buckets Configuration
+-- Run this in SQL Editor to ensure private storage buckets exist
 -- ============================================================
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES
+    (
+        'original-scores',
+        'original-scores',
+        false,
+        52428800,
+        ARRAY['application/pdf', 'image/png', 'image/jpeg', 'image/jpg']
+    ),
+    (
+        'transcriptions',
+        'transcriptions',
+        false,
+        52428800,
+        ARRAY['application/xml', 'text/xml', 'application/vnd.recordare.musicxml', 'application/octet-stream']
+    )
+ON CONFLICT (id) DO UPDATE SET
+    public = false,
+    file_size_limit = 52428800;
