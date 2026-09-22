@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Download, FileText, Music, Archive, Check, X } from 'lucide-react';
+import { Download, FileText, Music, Archive, Check, X, Clock } from 'lucide-react';
 import JSZip from 'jszip';
-import { jsPDF } from 'jspdf';
+import jsPDF from 'jspdf';
 import { ScoreProject } from '../../types';
 import { Button } from '../common/Button';
 
@@ -21,38 +21,41 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const sanitizedFilename = (score.title || score.originalFilename || 'transcription')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '_');
+  // Clean base name based on source file (e.g., "Music test piece.pdf" -> "Music test piece")
+  const sourceName = (score.originalFilename || score.title || 'Score')
+    .replace(/\.[^/.]+$/, '')
+    .trim();
 
-  // 1. Export MusicXML (.musicxml)
+  // 1. Export MusicXML (.musicxml) — Requirement 15
   const handleExportMusicXml = () => {
     if (!score.rawMusicXml) return;
     setIsExporting('musicxml');
     try {
-      const blob = new Blob([score.rawMusicXml], { type: 'application/vnd.recordare.musicxml+xml' });
+      const blob = new Blob([score.rawMusicXml], {
+        type: 'application/vnd.recordare.musicxml+xml;charset=utf-8'
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${sanitizedFilename}.musicxml`;
+      a.download = `${sourceName} - MUSIQ.musicxml`;
       a.click();
       URL.revokeObjectURL(url);
       setSuccessMessage('MusicXML file downloaded successfully.');
     } catch (err: any) {
-      console.error(err);
+      console.error('[Export MusicXML Error]', err);
     } finally {
       setIsExporting(null);
     }
   };
 
-  // 2. Export Compressed MusicXML (.mxl)
+  // 2. Export Compressed MusicXML (.mxl) — Requirement 16
   const handleExportMxl = async () => {
     if (!score.rawMusicXml) return;
     setIsExporting('mxl');
     try {
       const zip = new JSZip();
-      
-      // Standard MXL container descriptor
+
+      // Standard MusicXML MXL container descriptor
       const containerXml = `<?xml version="1.0" encoding="UTF-8"?>
 <container>
   <rootfiles>
@@ -63,62 +66,54 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       zip.folder('META-INF')?.file('container.xml', containerXml);
       zip.file('score.xml', score.rawMusicXml);
 
-      const content = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.recordare.musicxml' });
+      const content = await zip.generateAsync({
+        type: 'blob',
+        mimeType: 'application/vnd.recordare.musicxml'
+      });
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${sanitizedFilename}.mxl`;
+      a.download = `${sourceName} - MUSIQ.mxl`;
       a.click();
       URL.revokeObjectURL(url);
       setSuccessMessage('Compressed MusicXML (.mxl) exported successfully.');
     } catch (err: any) {
-      console.error(err);
+      console.error('[Export MXL Error]', err);
     } finally {
       setIsExporting(null);
     }
   };
 
-  // 3. Export PDF (All Pages / Complete rendered transcription)
+  // 3. Export PDF Document (.pdf) — Requirement 17
   const handleExportPdf = async () => {
     setIsExporting('pdf');
     try {
       const svgElements = Array.from(document.querySelectorAll('#osmd-notation-canvas svg'));
-      
       if (svgElements.length === 0) {
-        // If notation SVGs not currently rendered, create document from scan pages
-        const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-        const width = doc.internal.pageSize.getWidth();
-        const height = doc.internal.pageSize.getHeight();
-
-        score.pages.forEach((pageUrl, idx) => {
-          if (idx > 0) doc.addPage();
-          doc.addImage(pageUrl, 'JPEG', 20, 20, width - 40, height - 40);
-        });
-
-        doc.save(`${sanitizedFilename}-transcription.pdf`);
-        setSuccessMessage('PDF exported successfully.');
-        return;
+        throw new Error('No notation rendered to export.');
       }
-
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-      const pageWidth = doc.internal.pageSize.getWidth();
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'pt',
+        format: 'a4'
+      });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
 
       for (let i = 0; i < svgElements.length; i++) {
-        if (i > 0) doc.addPage();
-        
+        if (i > 0) pdf.addPage();
         const svg = svgElements[i] as SVGElement;
         const svgData = new XMLSerializer().serializeToString(svg);
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
-        const svgBBox = svg.getBoundingClientRect();
-        canvas.width = svgBBox.width * 2 || 1200;
-        canvas.height = svgBBox.height * 2 || 1600;
+        const bbox = svg.getBoundingClientRect();
+
+        canvas.width = (bbox.width || 1200) * 2;
+        canvas.height = (bbox.height || 1600) * 2;
 
         const img = new window.Image();
         const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-        const URLObj = window.URL || window.webkitURL || window;
-        const blobURL = URLObj.createObjectURL(svgBlob);
+        const blobURL = URL.createObjectURL(svgBlob);
 
         await new Promise((resolve) => {
           img.onload = () => {
@@ -127,27 +122,29 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               ctx.fillRect(0, 0, canvas.width, canvas.height);
               ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             }
-            URLObj.revokeObjectURL(blobURL);
+            URL.revokeObjectURL(blobURL);
             resolve(true);
           };
           img.src = blobURL;
         });
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
-        const imgHeight = (canvas.height * (pageWidth - 40)) / canvas.width;
-        doc.addImage(imgData, 'JPEG', 20, 20, pageWidth - 40, imgHeight);
+        const imgData = canvas.toDataURL('image/png');
+        const margin = 20;
+        const renderWidth = pdfWidth - (margin * 2);
+        const renderHeight = (canvas.height * renderWidth) / canvas.width;
+        pdf.addImage(imgData, 'PNG', margin, margin, renderWidth, Math.min(renderHeight, pdfHeight - (margin * 2)));
       }
 
-      doc.save(`${sanitizedFilename}-transcription.pdf`);
-      setSuccessMessage('Complete multi-page PDF exported.');
+      pdf.save(`${sourceName} - MUSIQ.pdf`);
+      setSuccessMessage('Score exported as PDF document successfully.');
     } catch (err: any) {
-      console.error(err);
+      console.error('[Export PDF Error]', err);
     } finally {
       setIsExporting(null);
     }
   };
 
-  // 4. Export Current Page as PNG
+  // 4. Export Current Page / Notation Canvas as PNG — Requirement 18
   const handleExportCurrentPng = async () => {
     setIsExporting('png-current');
     try {
@@ -161,8 +158,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       const ctx = canvas.getContext('2d');
       const bbox = svg.getBoundingClientRect();
 
-      canvas.width = bbox.width * 2 || 1600;
-      canvas.height = bbox.height * 2 || 2200;
+      canvas.width = (bbox.width || 1200) * 2;
+      canvas.height = (bbox.height || 1600) * 2;
 
       const img = new window.Image();
       const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
@@ -183,17 +180,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');
-      a.download = `${sanitizedFilename}-page-01.png`;
+      a.download = `${sourceName} - MUSIQ.png`;
       a.click();
-      setSuccessMessage('Current page downloaded as PNG.');
+      setSuccessMessage('Notation view downloaded as PNG image.');
     } catch (err: any) {
-      console.error(err);
+      console.error('[Export PNG Error]', err);
     } finally {
       setIsExporting(null);
     }
   };
 
-  // 5. Export All Pages as PNG ZIP
+  // 4. Export All Rendered Notation Pages as PNG ZIP
   const handleExportAllPngZip = async () => {
     setIsExporting('png-zip');
     try {
@@ -208,8 +205,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           const ctx = canvas.getContext('2d');
           const bbox = svg.getBoundingClientRect();
 
-          canvas.width = bbox.width * 2 || 1600;
-          canvas.height = bbox.height * 2 || 2200;
+          canvas.width = (bbox.width || 1200) * 2;
+          canvas.height = (bbox.height || 1600) * 2;
 
           const img = new window.Image();
           const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
@@ -232,25 +229,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           const pageNum = (i + 1).toString().padStart(2, '0');
           zip.file(`page-${pageNum}.png`, base64Data, { base64: true });
         }
-      } else if (score.pages && score.pages.length > 0) {
-        score.pages.forEach((pUrl, i) => {
-          const base64Data = pUrl.includes(',') ? pUrl.split(',')[1] : '';
-          const pageNum = (i + 1).toString().padStart(2, '0');
-          if (base64Data) {
-            zip.file(`page-${pageNum}.png`, base64Data, { base64: true });
-          }
-        });
       }
 
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(zipBlob);
-      a.download = `${sanitizedFilename}-pages.zip`;
+      a.download = `${sourceName} - MUSIQ-pages.zip`;
       a.click();
       URL.revokeObjectURL(a.href);
-      setSuccessMessage('All pages exported in ZIP package.');
+      setSuccessMessage('All pages exported in ZIP archive.');
     } catch (err: any) {
-      console.error(err);
+      console.error('[Export ZIP Error]', err);
     } finally {
       setIsExporting(null);
     }
@@ -270,20 +259,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <h3 className="text-xl font-bold text-[#F4F1EA] mt-0.5">
               {score.title || score.originalFilename}
             </h3>
-            <p className="text-xs text-[#9A9AA3] mt-1">
-              Select an editable musical format or visual document export.
+            <p className="text-xs text-[#9A9AA3] mt-1 font-mono">
+              Output filename: {sourceName} - MUSIQ.*
             </p>
           </div>
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#9A9AA3] hover:text-[#F4F1EA] hover:bg-[#18181D] transition-colors"
+            className="p-1.5 rounded-lg text-[#9A9AA3] hover:text-[#F4F1EA] hover:bg-[#18181D] transition-colors cursor-pointer"
+            aria-label="Close dialog"
           >
             <X size={18} />
           </button>
         </div>
 
-        {/* Feedback alert */}
+        {/* Feedback Alert */}
         {successMessage && (
           <div className="p-3 bg-[#4ADE80]/15 border border-[#4ADE80]/40 rounded-xl text-xs text-[#4ADE80] flex items-center gap-2">
             <Check size={16} />
@@ -299,7 +289,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* MusicXML */}
+            {/* MusicXML (.musicxml) */}
             <button
               onClick={handleExportMusicXml}
               disabled={!hasMusicXml || isExporting !== null}
@@ -310,21 +300,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-[#F4F1EA]">MusicXML (.xml)</span>
-                <span className="px-1.5 py-0.5 rounded bg-[#8B5CF6]/20 text-[#A78BFA] text-[10px] font-mono">
+                <span className="font-bold text-sm text-[#F4F1EA]">MusicXML</span>
+                <span className="px-1.5 py-0.5 rounded bg-[#8B5CF6]/20 text-[#A78BFA] text-[10px] font-mono font-bold">
                   Standard
                 </span>
               </div>
               <p className="text-[11px] text-[#9A9AA3] mt-2 leading-relaxed">
-                Full uncompressed notation interchange format for Sibelius, Finale, Dorico & MuseScore.
+                Full uncompressed notation interchange format for MuseScore, Sibelius, Finale & Dorico.
               </p>
               <div className="text-[10px] font-mono text-[#A78BFA] mt-3 flex items-center gap-1 font-semibold">
                 <Download size={12} />
-                <span>{isExporting === 'musicxml' ? 'Exporting...' : 'Download MusicXML'}</span>
+                <span>{isExporting === 'musicxml' ? 'Exporting...' : 'Download .musicxml'}</span>
               </div>
             </button>
 
-            {/* Compressed MXL */}
+            {/* Compressed MXL (.mxl) */}
             <button
               onClick={handleExportMxl}
               disabled={!hasMusicXml || isExporting !== null}
@@ -336,7 +326,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             >
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-[#F4F1EA]">Compressed (.mxl)</span>
-                <span className="px-1.5 py-0.5 rounded bg-[#67E8F9]/20 text-[#67E8F9] text-[10px] font-mono">
+                <span className="px-1.5 py-0.5 rounded bg-[#67E8F9]/20 text-[#67E8F9] text-[10px] font-mono font-bold">
                   Archive
                 </span>
               </div>
@@ -345,20 +335,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </p>
               <div className="text-[10px] font-mono text-[#67E8F9] mt-3 flex items-center gap-1 font-semibold">
                 <Download size={12} />
-                <span>{isExporting === 'mxl' ? 'Packaging...' : 'Download MXL'}</span>
+                <span>{isExporting === 'mxl' ? 'Packaging...' : 'Download .mxl'}</span>
               </div>
             </button>
-          </div>
-
-          {/* MIDI Option (disabled when valid note stream not generated) */}
-          <div className="p-3 rounded-xl border border-[#27272D]/60 bg-[#141418] flex items-center justify-between text-xs font-mono text-[#6E6E77]">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-[#9A9AA3]">MIDI (.mid)</span>
-              <span>• Raw note events</span>
-            </div>
-            <span className="text-[10px] text-[#FBBF24]">
-              {hasMusicXml ? 'Supported via MusicXML import in DAWs' : 'MIDI unavailable'}
-            </span>
           </div>
         </div>
 
@@ -370,25 +349,28 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* PDF (All Pages) */}
+            {/* PDF Export (.pdf) — Requirement 17 */}
             <button
               onClick={handleExportPdf}
               disabled={isExporting !== null}
-              className="p-3 rounded-xl bg-[#18181D] border border-[#27272D] hover:border-[#A78BFA] text-left transition-all cursor-pointer flex flex-col justify-between"
+              className="p-3 rounded-xl bg-[#18181D] border border-[#27272D] hover:border-[#8B5CF6] text-left transition-all cursor-pointer flex flex-col justify-between"
             >
               <div className="font-bold text-xs text-[#F4F1EA] flex items-center justify-between">
                 <span>PDF Document</span>
-                <span className="text-[10px] font-mono text-[#4ADE80]">ALL PAGES</span>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#8B5CF6]/20 text-[#A78BFA] font-bold">
+                  Print
+                </span>
               </div>
-              <p className="text-[10px] text-[#9A9AA3] mt-1">
-                Typeset printable transcription score.
+              <p className="text-[10px] text-[#9A9AA3] mt-1.5">
+                Formatted multi-page sheet music PDF ready for printing.
               </p>
-              <span className="text-[10px] font-mono text-[#A78BFA] mt-2 font-semibold">
-                {isExporting === 'pdf' ? 'Rendering...' : 'Export PDF →'}
+              <span className="text-[10px] font-mono text-[#A78BFA] mt-2 font-semibold flex items-center gap-1">
+                <Download size={11} />
+                <span>{isExporting === 'pdf' ? 'Generating PDF...' : 'Download PDF'}</span>
               </span>
             </button>
 
-            {/* Current Page PNG */}
+            {/* Current Page PNG (Requirement 18) */}
             <button
               onClick={handleExportCurrentPng}
               disabled={isExporting !== null}
@@ -398,7 +380,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 Current Page PNG
               </div>
               <p className="text-[10px] text-[#9A9AA3] mt-1">
-                Single high-res page image.
+                High-resolution notation image.
               </p>
               <span className="text-[10px] font-mono text-[#A78BFA] mt-2 font-semibold">
                 {isExporting === 'png-current' ? 'Capturing...' : 'Download PNG →'}

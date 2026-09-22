@@ -147,7 +147,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </section>
 
-        {/* Storage & Demo Reset */}
+        {/* Storage Reset */}
         <section className="bg-[#111114] border border-[#27272D] rounded-2xl p-5 sm:p-6 space-y-4">
           <div className="flex items-center gap-2 text-sm font-bold text-[#F4F1EA]">
             <Database size={17} className="text-[#FBBF24]" />
@@ -156,9 +156,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           <div className="flex items-center justify-between py-2">
             <div>
-              <div className="text-sm font-semibold text-[#F4F1EA]">Reset Demo Project State</div>
+              <div className="text-sm font-semibold text-[#F4F1EA]">Clear Local Data & Cache</div>
               <div className="text-xs text-[#9A9AA3]">
-                Restores original SATB choir scores, Afrobeats Lagos song, and Studio tracks.
+                Clears locally stored transcription scores, cached notation, and resets workspace preferences.
               </div>
             </div>
             <Button

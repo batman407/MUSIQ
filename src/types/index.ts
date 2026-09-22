@@ -59,6 +59,7 @@ export interface PlaybackMix {
 
 export interface ScoreProject {
   id: string;
+  jobId?: string;
   title: string;
   originalFilename: string;
   mimeType: string;

@@ -1,15 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Camera, Upload, Eye, FileText, ChevronLeft, ChevronRight, 
-  RotateCcw, CheckCircle2, Download, ArrowLeft, RefreshCw, 
-  Music, XCircle
+  CheckCircle2, Download, ArrowLeft, RefreshCw, 
+  Music, XCircle, Columns, Maximize2
 } from 'lucide-react';
 import { ScoreProject } from '../types';
 import { omrService, OMRJobProgress, OMRHealthStatus } from '../services/omrService';
 import { storageService } from '../services/storageService';
 import { Button } from '../components/common/Button';
 import { MusiqMark } from '../components/brand/MusiqLogo';
-import { MusicXmlRenderer } from '../components/notation/MusicXmlRenderer';
+import { MusicXmlViewer } from '../components/notation/MusicXmlViewer';
 import { ExportModal } from '../components/notation/ExportModal';
 
 interface VisionViewProps {
@@ -23,11 +23,15 @@ export const VisionView: React.FC<VisionViewProps> = ({
   onScoreTranscribed,
   isPaperMode = false
 }) => {
-  // Score state: null = blank state
+  // Score state
   const [score, setScore] = useState<ScoreProject | null>(currentScore);
-  const [activeTab, setActiveTab] = useState<'original' | 'transcribed'>('original');
+  const [activeTab, setActiveTab] = useState<'original' | 'transcribed' | 'compare'>('original');
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | Blob | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string>('');
+
+  // Object URL tracking for clean revocation
+  const createdObjectUrlsRef = useRef<string[]>([]);
 
   // Camera state
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -38,9 +42,33 @@ export const VisionView: React.FC<VisionViewProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [omrProgress, setOmrProgress] = useState<OMRJobProgress | null>(null);
   const [healthStatus, setHealthStatus] = useState<OMRHealthStatus | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Export Modal state
   const [isExportOpen, setIsExportOpen] = useState(false);
+
+  // Register an object URL to be cleaned on unmount
+  const trackObjectUrl = (url: string) => {
+    createdObjectUrlsRef.current.push(url);
+    return url;
+  };
+
+  // Clean all tracked object URLs on unmount
+  useEffect(() => {
+    return () => {
+      createdObjectUrlsRef.current.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // ignore
+        }
+      });
+      createdObjectUrlsRef.current = [];
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Sync currentScore from props
   useEffect(() => {
@@ -54,10 +82,10 @@ export const VisionView: React.FC<VisionViewProps> = ({
 
   // Check OMR backend health once on mount
   useEffect(() => {
-    omrService.checkHealth().then(status => setHealthStatus(status));
+    omrService.checkHealth().then(status => setHealthStatus(status)).catch(() => {});
   }, []);
 
-  // Handle Camera
+  // Handle Camera Capture
   const handleStartCamera = async () => {
     setIsCameraOpen(true);
     try {
@@ -92,12 +120,14 @@ export const VisionView: React.FC<VisionViewProps> = ({
         const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
         handleStopCamera();
 
-        // Convert base64 to File object
+        // Convert base64 dataUrl to Blob/File object
         fetch(dataUrl)
           .then(res => res.blob())
           .then(blob => {
-            const photoFile = new File([blob], `photo-score-${Date.now()}.jpg`, { type: 'image/jpeg' });
-            createProjectFromFile(photoFile, [dataUrl]);
+            const photoName = `photo-score-${Date.now()}.jpg`;
+            const photoFile = new File([blob], photoName, { type: 'image/jpeg' });
+            const previewUrl = trackObjectUrl(URL.createObjectURL(photoFile));
+            startScoreWorkflow(photoFile, [previewUrl], photoName);
           });
         return;
       }
@@ -105,16 +135,15 @@ export const VisionView: React.FC<VisionViewProps> = ({
     handleStopCamera();
   };
 
-  // Handle File Upload (PDF, PNG, JPG, MusicXML)
+  // Handle File Upload (PDF, PNG, JPG, JPEG, or direct MusicXML)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setUploadedFile(file);
     const isXml = file.name.endsWith('.xml') || file.name.endsWith('.musicxml');
 
     if (isXml) {
-      // Direct MusicXML upload: parse and load directly
+      // Direct MusicXML file: parse and load directly
       const reader = new FileReader();
       reader.onload = () => {
         const xmlText = reader.result as string;
@@ -132,59 +161,70 @@ export const VisionView: React.FC<VisionViewProps> = ({
       return;
     }
 
-    const fileUrl = URL.createObjectURL(file);
-    createProjectFromFile(file, [fileUrl]);
+    const previewUrl = trackObjectUrl(URL.createObjectURL(file));
+    startScoreWorkflow(file, [previewUrl], file.name);
   };
 
-  // Initialize ScoreProject strictly from the user's uploaded file
-  const createProjectFromFile = (file: File, pageUrls: string[]) => {
+  // Start unified Score Workflow (immediately preserves original preview, then initiates OMR)
+  const startScoreWorkflow = (file: File | Blob, pageUrls: string[], filename: string) => {
     setUploadedFile(file);
-    const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+    setUploadedFileName(filename);
+
+    const cleanTitle = filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
 
     const newProject: ScoreProject = {
       id: `score-${Date.now()}`,
       title: cleanTitle,
-      originalFilename: file.name,
-      mimeType: file.type,
+      originalFilename: filename,
+      mimeType: file instanceof File ? file.type : 'image/jpeg',
       fileSize: file.size,
-      arrangementType: 'Unprocessed Score',
+      arrangementType: 'Sheet Music',
       parts: [],
       measuresCount: 0,
       pagesCount: pageUrls.length || 1,
       currentPage: 1,
       pages: pageUrls,
       originalScanUrl: pageUrls[0],
-      recognitionStatus: 'idle',
+      recognitionStatus: 'uploading',
       createdAt: new Date().toISOString()
     };
 
     setScore(newProject);
     setActiveTab('original');
     setCurrentPage(1);
+
+    // Automatically trigger genuine OMR processing
+    runTranscription(file, filename, pageUrls, newProject);
   };
 
-  // Execute OMR Transcription
-  const handleTranscribe = async () => {
-    if (!score || !uploadedFile) {
-      // If we only have score with originalScanUrl
-      if (!uploadedFile) {
-        alert('Please re-select the source file to send to the OMR backend.');
-        return;
-      }
-      return;
+  // Execute OMR Transcription with real Railway backend polling
+  const runTranscription = async (
+    file: File | Blob,
+    filename: string,
+    pageUrls: string[],
+    existingProject: ScoreProject
+  ) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     setIsProcessing(true);
     setOmrProgress({
       status: 'uploading',
-      stageMessage: 'Checking OMR service connectivity...'
+      stageMessage: 'Connecting to recognition service...'
     });
 
     try {
       const transcribedScore = await omrService.processScore(
-        uploadedFile,
-        score.pages,
-        (prog) => setOmrProgress(prog)
+        file,
+        pageUrls,
+        filename,
+        (prog) => {
+          setOmrProgress(prog);
+        },
+        abortController.signal
       );
 
       setScore(transcribedScore);
@@ -192,21 +232,35 @@ export const VisionView: React.FC<VisionViewProps> = ({
       storageService.saveScore(transcribedScore);
       onScoreTranscribed(transcribedScore);
     } catch (err: any) {
-      console.error('[OMR Error]', err);
-      setScore(prev => prev ? {
+      if (abortController.signal.aborted) return;
+      console.error('[OMR Execution Error]', err);
+
+      const isUnavailable = err.message?.includes('temporarily unavailable') || err.message?.includes('not connected');
+
+      setScore(prev => (prev ? {
         ...prev,
-        recognitionStatus: err.message.includes('not connected') ? 'unconnected' : 'failed',
-        errorMessage: err.message
-      } : null);
+        recognitionStatus: isUnavailable ? 'unconnected' : 'failed',
+        errorMessage: err.message || "We couldn't transcribe this score."
+      } : null));
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Reset to empty state
+  // User clicked "Try Again"
+  const handleRetryTranscription = () => {
+    if (!uploadedFile || !score) return;
+    runTranscription(uploadedFile, uploadedFileName || score.originalFilename, score.pages, score);
+  };
+
+  // Reset to empty state (New Transcription)
   const handleResetToBlank = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setScore(null);
     setUploadedFile(null);
+    setUploadedFileName('');
     setOmrProgress(null);
     setActiveTab('original');
   };
@@ -217,7 +271,6 @@ export const VisionView: React.FC<VisionViewProps> = ({
   // "Turn sheet music into sound."
   // [ Take a Photo ] [ Upload Score ]
   // "Upload PDF, PNG or JPG."
-  // NO demo score, NO composer, NO measures, NO SATB, NO confidence, NO playback
   // =========================================================================
   if (!score && !isProcessing) {
     return (
@@ -230,10 +283,10 @@ export const VisionView: React.FC<VisionViewProps> = ({
           <div className="text-xs font-mono uppercase tracking-[0.25em] text-[#67E8F9] font-semibold">
             MUSIQ VISION • OPTICAL MUSIC RECOGNITION
           </div>
-          <h1 className="text-3xl sm:text-4xl font-extrabold text-[#F4F1EA] tracking-tight">
+          <h1 className="text-3xl sm:text-5xl font-extrabold text-[#F4F1EA] tracking-tight">
             Turn sheet music into sound.
           </h1>
-          <p className="text-sm text-[#9A9AA3] leading-relaxed">
+          <p className="text-sm sm:text-base text-[#9A9AA3] leading-relaxed">
             Upload PDF, PNG or JPG.
           </p>
         </div>
@@ -273,7 +326,7 @@ export const VisionView: React.FC<VisionViewProps> = ({
               </div>
               <button
                 onClick={handleStopCamera}
-                className="text-xs text-[#9A9AA3] hover:text-[#F4F1EA] px-3 py-1.5 rounded-full border border-[#27272D]"
+                className="text-xs text-[#9A9AA3] hover:text-[#F4F1EA] px-3 py-1.5 rounded-full border border-[#27272D] cursor-pointer"
               >
                 Cancel
               </button>
@@ -307,11 +360,11 @@ export const VisionView: React.FC<VisionViewProps> = ({
           </div>
         )}
 
-        {/* Backend Status Pill */}
+        {/* Service Availability Pill */}
         <div className="pt-8">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#111114] border border-[#27272D] text-xs font-mono text-[#9A9AA3]">
             <span className={`w-2 h-2 rounded-full ${healthStatus?.connected ? 'bg-[#4ADE80]' : 'bg-[#FBBF24]'}`} />
-            <span>OMR Backend: {healthStatus?.connected ? 'Connected' : 'Standalone / Docker Ready'}</span>
+            <span>Transcription Engine: {healthStatus?.connected ? 'Online' : 'Checking connection...'}</span>
           </div>
         </div>
       </div>
@@ -319,44 +372,68 @@ export const VisionView: React.FC<VisionViewProps> = ({
   }
 
   // =========================================================================
-  // 2. PROCESSING STATE: Genuine progress without fake setTimeout
+  // 2. PROCESSING STATE: Truthful progress & Original Preview preservation
+  // User can view their original document while processing
   // =========================================================================
   if (isProcessing) {
+    const isPdf = score?.mimeType?.includes('pdf') || score?.originalFilename?.endsWith('.pdf');
+
     return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-6 animate-in fade-in">
-        <div className="flex justify-center">
-          <MusiqMark size={64} isAnimated />
+      <div className="max-w-4xl mx-auto px-4 py-8 space-y-8 animate-in fade-in">
+        {/* Progress Banner */}
+        <div className="bg-[#111114] border border-[#8B5CF6]/40 rounded-2xl p-6 sm:p-8 text-center space-y-4 shadow-xl">
+          <div className="flex justify-center">
+            <MusiqMark size={56} isAnimated />
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#8B5CF6]/20 text-[#A78BFA] text-xs font-mono font-bold">
+              <RefreshCw size={12} className="animate-spin" />
+              <span>{omrProgress?.status.toUpperCase() || 'PROCESSING'}</span>
+            </div>
+            <h3 className="text-xl sm:text-2xl font-bold text-[#F4F1EA]">
+              {omrProgress?.stageMessage || 'Reading musical notation...'}
+            </h3>
+            <p className="text-xs text-[#9A9AA3] font-mono">
+              Target: {score?.originalFilename || uploadedFileName}
+            </p>
+          </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#8B5CF6]/20 text-[#A78BFA] text-xs font-mono font-bold">
-            <RefreshCw size={12} className="animate-spin" />
-            <span>{omrProgress?.status.toUpperCase() || 'PROCESSING'}</span>
+        {/* Original File Preview during recognition */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-xs font-mono text-[#9A9AA3] px-1">
+            <span>ORIGINAL SOURCE PREVIEW</span>
+            <span>Page {currentPage} of {score?.pagesCount || 1}</span>
           </div>
-          <h3 className="text-xl font-bold text-[#F4F1EA]">
-            {omrProgress?.stageMessage || 'Transcribing score with Optical Music Recognition...'}
-          </h3>
-          <p className="text-xs text-[#9A9AA3]">
-            Target document: {score?.originalFilename || score?.title}
-          </p>
-        </div>
 
-        {/* Real Progress Bar */}
-        {omrProgress?.progressPercent !== undefined && (
-          <div className="w-full bg-[#18181D] rounded-full h-2 overflow-hidden border border-[#27272D]">
-            <div 
-              className="bg-[#8B5CF6] h-full transition-all duration-300"
-              style={{ width: `${omrProgress.progressPercent}%` }}
-            />
+          <div className="bg-[#111114] border border-[#27272D] rounded-2xl p-4 flex flex-col items-center justify-center min-h-[420px] overflow-hidden">
+            {isPdf ? (
+              <iframe
+                src={`${score?.originalScanUrl}#page=${currentPage}`}
+                title="Original PDF Document Preview"
+                className="w-full h-[520px] rounded-xl border border-[#27272D] bg-white"
+              />
+            ) : score?.pages && score.pages[currentPage - 1] ? (
+              <img
+                src={score.pages[currentPage - 1]}
+                alt={`Original Score Page ${currentPage}`}
+                className="max-h-[520px] object-contain rounded-xl shadow-lg"
+              />
+            ) : (
+              <div className="text-center p-8 space-y-2 text-[#9A9AA3]">
+                <FileText size={48} className="mx-auto text-[#6E6E77]" />
+                <p>Original file: {score?.originalFilename}</p>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     );
   }
 
   // =========================================================================
   // 3. FAILURE / UNCONNECTED STATE: Transparent error handling
-  // If recognition fails or OMR backend is disconnected:
   // "We couldn't transcribe this score."
   // Options: Try Again, Upload Another Score, View Original
   // NEVER show another composition.
@@ -375,32 +452,19 @@ export const VisionView: React.FC<VisionViewProps> = ({
               </h3>
               <p className="text-sm text-[#9A9AA3]">
                 {isUnconnected 
-                  ? 'Please try again later. The transcription service is currently offline or reconnecting.'
+                  ? 'The optical music recognition service is temporarily unreachable. Please try again shortly.'
                   : score.errorMessage || 'Optical recognition could not extract notation from this file.'}
               </p>
             </div>
           </div>
 
-          {/* Development diagnostics only visible in local dev mode */}
-          {isUnconnected && import.meta.env.DEV && (
-            <div className="p-4 bg-[#18181D] border border-[#27272D] rounded-xl text-xs font-mono text-[#F4F1EA] space-y-2">
-              <div className="text-[#67E8F9] font-bold">[Dev Mode] OMR Server Container Setup:</div>
-              <pre className="p-2.5 bg-black rounded text-[#A78BFA] overflow-x-auto">
-                cd server && docker compose up --build
-              </pre>
-              <div className="text-[11px] text-[#9A9AA3]">
-                Once running on port 3001, click "Try Again" to transcribe.
-              </div>
-            </div>
-          )}
-
-          {/* Recovery Options: Try Again, Upload Another Score, View Original */}
+          {/* Recovery Actions: Try Again, View Original, Upload Another Score */}
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <Button
               variant="primary"
               size="md"
               icon={<RefreshCw size={15} />}
-              onClick={handleTranscribe}
+              onClick={handleRetryTranscription}
             >
               Try Again
             </Button>
@@ -432,40 +496,40 @@ export const VisionView: React.FC<VisionViewProps> = ({
   }
 
   // =========================================================================
-  // 4. USER SCORE LOADED (ORIGINAL / TRANSCRIBED VIEW)
-  // Source of truth is ALWAYS the user's uploaded file.
-  // Multi-page navigation (Page X of Y), View Toggle (Original vs Transcribed),
-  // OpenSheetMusicDisplay renderer, and Export dialog.
+  // 4. RESULT SCREEN (ORIGINAL | TRANSCRIPTION | COMPARE)
+  // Header: [filename] + Transcription complete
+  // Primary actions: Export, New Transcription
+  // Secondary actions: Zoom In, Zoom Out, Fit Width
   // =========================================================================
   const isPdf = score?.mimeType?.includes('pdf') || score?.originalFilename?.endsWith('.pdf');
   const hasTranscribedXml = Boolean(score?.rawMusicXml);
 
   return (
     <div className={`p-4 sm:p-8 max-w-7xl mx-auto space-y-6 ${isPaperMode ? 'score-paper-mode' : ''}`}>
-      {/* Top Score Context Header */}
+      {/* Top Header: Filename, Status & Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#27272D]/60 pb-5">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <button
               onClick={handleResetToBlank}
-              className="text-xs font-mono text-[#9A9AA3] hover:text-[#F4F1EA] flex items-center gap-1 mr-2"
+              className="text-xs font-mono text-[#9A9AA3] hover:text-[#F4F1EA] flex items-center gap-1 mr-2 cursor-pointer"
             >
               <ArrowLeft size={13} />
-              <span>Upload New</span>
+              <span>New Transcription</span>
             </button>
-            <span className="px-2 py-0.5 rounded bg-[#8B5CF6]/20 text-[#A78BFA] text-[10px] font-mono font-bold">
-              {score?.arrangementType || 'DOCUMENT'}
+            <span className="px-2 py-0.5 rounded bg-[#8B5CF6]/20 text-[#A78BFA] text-[10px] font-mono font-bold uppercase">
+              {score?.arrangementType || 'SCORE'}
             </span>
             {hasTranscribedXml && (
               <span className="text-xs font-mono text-[#4ADE80] flex items-center gap-1">
                 <CheckCircle2 size={13} />
-                Transcribed
+                Transcription complete
               </span>
             )}
           </div>
 
-          <h2 className="text-2xl sm:text-3xl font-bold text-[#F4F1EA]">
-            {score?.title}
+          <h2 className="text-2xl sm:text-3xl font-bold text-[#F4F1EA] truncate max-w-2xl">
+            {score?.title || score?.originalFilename}
           </h2>
           <p className="text-xs text-[#9A9AA3] font-mono">
             File: {score?.originalFilename} {score?.fileSize ? `(${Math.round(score.fileSize / 1024)} KB)` : ''} • {score?.pagesCount || 1} Page{score?.pagesCount === 1 ? '' : 's'}
@@ -473,9 +537,9 @@ export const VisionView: React.FC<VisionViewProps> = ({
           </p>
         </div>
 
-        {/* Primary Action Controls: View Switcher (Original / Transcribed) & Export */}
+        {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Tab Switcher: ORIGINAL vs TRANSCRIBED */}
+          {/* Tab Switcher: ORIGINAL vs TRANSCRIPTION (plus Compare on desktop) */}
           <div className="bg-[#18181D] border border-[#27272D] p-1 rounded-xl flex items-center gap-1 text-xs font-mono font-bold">
             <button
               onClick={() => setActiveTab('original')}
@@ -487,37 +551,38 @@ export const VisionView: React.FC<VisionViewProps> = ({
               <span>ORIGINAL</span>
             </button>
             <button
-              onClick={() => {
-                if (hasTranscribedXml) {
-                  setActiveTab('transcribed');
-                } else {
-                  handleTranscribe();
-                }
-              }}
+              onClick={() => setActiveTab('transcribed')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'transcribed' ? 'bg-[#8B5CF6] text-white' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
               }`}
             >
               <Music size={13} />
-              <span>TRANSCRIBED</span>
+              <span>TRANSCRIPTION</span>
+            </button>
+            {/* Desktop Compare Toggle */}
+            <button
+              onClick={() => setActiveTab('compare')}
+              className={`hidden md:flex px-3 py-1.5 rounded-lg transition-colors cursor-pointer items-center gap-1.5 ${
+                activeTab === 'compare' ? 'bg-[#8B5CF6] text-white' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+              }`}
+            >
+              <Columns size={13} />
+              <span>COMPARE</span>
             </button>
           </div>
 
-          {/* Transcribe Trigger if not yet transcribed */}
-          {!hasTranscribedXml && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<RefreshCw size={14} />}
-              onClick={handleTranscribe}
-            >
-              Run OMR Transcription
-            </Button>
-          )}
-
-          {/* Export Dialog Trigger */}
+          {/* New Transcription Action */}
           <Button
-            variant="secondary"
+            variant="ghost"
+            size="sm"
+            onClick={handleResetToBlank}
+          >
+            New Transcription
+          </Button>
+
+          {/* Export Action */}
+          <Button
+            variant="primary"
             size="sm"
             icon={<Download size={14} />}
             onClick={() => setIsExportOpen(true)}
@@ -528,8 +593,50 @@ export const VisionView: React.FC<VisionViewProps> = ({
       </div>
 
       {/* Main View Area */}
-      {activeTab === 'original' ? (
-        /* ================= 4A. ORIGINAL DOCUMENT VIEW ================= */
+      {activeTab === 'compare' ? (
+        /* ================= 4A. DESKTOP COMPARE VIEW (Side-by-side) ================= */
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Original Document Half */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs font-mono text-[#9A9AA3] px-2">
+              <span className="font-bold text-[#67E8F9]">ORIGINAL DOCUMENT</span>
+              <span>Page {currentPage} of {score?.pagesCount || 1}</span>
+            </div>
+            <div className="bg-[#111114] border border-[#27272D] rounded-2xl p-4 flex items-center justify-center min-h-[600px] overflow-hidden">
+              {isPdf ? (
+                <iframe
+                  src={`${score?.originalScanUrl}#page=${currentPage}`}
+                  title="Original PDF Document"
+                  className="w-full h-[700px] rounded-xl border border-[#27272D] bg-white"
+                />
+              ) : score?.pages && score.pages[currentPage - 1] ? (
+                <img
+                  src={score.pages[currentPage - 1]}
+                  alt={`Original Score Page ${currentPage}`}
+                  className="max-h-[700px] object-contain rounded-xl shadow-lg"
+                />
+              ) : (
+                <div className="text-center p-8 text-[#9A9AA3]">Original file: {score?.originalFilename}</div>
+              )}
+            </div>
+          </div>
+
+          {/* Transcribed Notation Half */}
+          <div className="space-y-3">
+            <div className="text-xs font-mono text-[#9A9AA3] px-2 font-bold text-[#A78BFA]">
+              TRANSCRIBED NOTATION (OSMD)
+            </div>
+            {score?.rawMusicXml ? (
+              <MusicXmlViewer musicXml={score.rawMusicXml} />
+            ) : (
+              <div className="p-12 text-center bg-[#111114] border border-[#27272D] rounded-2xl text-sm text-[#9A9AA3]">
+                No transcription available.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeTab === 'original' ? (
+        /* ================= 4B. ORIGINAL DOCUMENT TAB ================= */
         <div className="space-y-4">
           {/* Multi-Page Navigation Bar */}
           <div className="bg-[#111114] border border-[#27272D] rounded-xl px-4 py-2.5 flex items-center justify-between font-mono text-xs text-[#F4F1EA]">
@@ -567,13 +674,13 @@ export const VisionView: React.FC<VisionViewProps> = ({
               <iframe
                 src={`${score?.originalScanUrl}#page=${currentPage}`}
                 title="Original PDF Score Viewer"
-                className="w-full h-[700px] rounded-xl border border-[#27272D] bg-white"
+                className="w-full h-[750px] rounded-xl border border-[#27272D] bg-white"
               />
             ) : score?.pages && score.pages[currentPage - 1] ? (
               <img
                 src={score.pages[currentPage - 1]}
                 alt={`Original Score Page ${currentPage}`}
-                className="max-h-[700px] object-contain rounded-xl shadow-lg"
+                className="max-h-[750px] object-contain rounded-xl shadow-lg"
               />
             ) : (
               <div className="text-center p-8 space-y-2 text-[#9A9AA3]">
@@ -584,11 +691,11 @@ export const VisionView: React.FC<VisionViewProps> = ({
           </div>
         </div>
       ) : (
-        /* ================= 4B. TRANSCRIBED NOTATION VIEW (OSMD) ================= */
+        /* ================= 4C. TRANSCRIPTION NOTATION TAB (OSMD) ================= */
         <div className="space-y-6">
           {score?.rawMusicXml ? (
             <div className="space-y-4">
-              <MusicXmlRenderer musicXml={score.rawMusicXml} />
+              <MusicXmlViewer musicXml={score.rawMusicXml} />
 
               {/* Dynamic Parts Summary */}
               {score.parts && score.parts.length > 0 && (
@@ -616,13 +723,13 @@ export const VisionView: React.FC<VisionViewProps> = ({
               <Music size={40} className="mx-auto text-[#8B5CF6]" />
               <h3 className="text-lg font-bold text-[#F4F1EA]">No transcription generated yet</h3>
               <p className="text-xs text-[#9A9AA3] max-w-md mx-auto">
-                Click "Run OMR Transcription" to submit {score?.originalFilename} to the recognition engine.
+                Submit this score to the recognition engine to typeset musical notation.
               </p>
               <Button
                 variant="primary"
                 size="md"
                 icon={<RefreshCw size={15} />}
-                onClick={handleTranscribe}
+                onClick={handleRetryTranscription}
               >
                 Run OMR Transcription
               </Button>

@@ -1,4 +1,12 @@
 import { ScoreProject, MusicalPart, ScoreMeasure, DetectedNote } from '../types';
+import {
+  OMR_API_URL,
+  checkOMRHealth,
+  submitScoreJob,
+  pollJobUntilComplete,
+  OMRApiError,
+  OMRJobStatusResponse
+} from './omr';
 
 export interface OMRHealthStatus {
   connected: boolean;
@@ -8,43 +16,25 @@ export interface OMRHealthStatus {
 }
 
 export interface OMRJobProgress {
-  status: 'idle' | 'uploading' | 'preprocessing' | 'recognizing' | 'exporting' | 'completed' | 'failed' | 'unconnected';
+  status: 'idle' | 'uploading' | 'queued' | 'processing' | 'completed' | 'failed' | 'unconnected';
   stageMessage: string;
   progressPercent?: number;
   error?: string;
+  jobId?: string;
 }
-
-const OMR_API_BASE = import.meta.env.VITE_OMR_API_URL || 'http://localhost:3001';
 
 class OMRService {
   /**
    * Check if real OMR backend is accessible and whether Audiveris is connected
    */
-  public async checkHealth(): Promise<OMRHealthStatus> {
+  public async checkHealth(signal?: AbortSignal): Promise<OMRHealthStatus> {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-      
-      const response = await fetch(`${OMR_API_BASE}/health`, {
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        return {
-          connected: false,
-          audiverisAvailable: false,
-          engine: 'Unknown',
-          message: 'OMR service returned non-200 status.'
-        };
-      }
-
-      const data = await response.json();
+      const data = await checkOMRHealth(signal);
       return {
-        connected: true,
+        connected: data.status === 'ok' && data.audiverisAvailable,
         audiverisAvailable: Boolean(data.audiverisAvailable),
-        engine: data.engine || 'Audiveris',
-        message: data.audiverisAvailable 
+        engine: data.omr || 'Audiveris',
+        message: data.audiverisAvailable
           ? 'Audiveris OMR service connected.'
           : 'OMR backend reachable, but Audiveris engine is not installed on the server host.'
       };
@@ -61,112 +51,90 @@ class OMRService {
   /**
    * Submit binary file (PDF / PNG / JPG) to real OMR backend.
    * NO FAKE TIMEOUTS OR DEMO SUBSTITUTION.
-   * If backend is not connected, throws clear honest error.
    */
   public async processScore(
-    file: File,
+    file: File | Blob,
     pageUrls: string[],
-    onProgress?: (progress: OMRJobProgress) => void
+    filename?: string,
+    onProgress?: (progress: OMRJobProgress) => void,
+    signal?: AbortSignal
   ): Promise<ScoreProject> {
+    const effectiveFilename = (file instanceof File ? file.name : filename) || 'score.pdf';
+    const effectiveType = (file instanceof File ? file.type : '') || 'application/pdf';
+    const effectiveSize = file instanceof File ? file.size : file.size;
+
     onProgress?.({
       status: 'uploading',
-      stageMessage: `Connecting to OMR backend: ${OMR_API_BASE}...`,
-      progressPercent: 10
+      stageMessage: 'Uploading score to recognition engine...'
     });
 
-    // 1. Submit binary file via multipart/form-data
-    const formData = new FormData();
-    formData.append('file', file);
-
+    // 1. Submit file to POST /jobs
     let jobId: string;
     try {
-      const uploadRes = await fetch(`${OMR_API_BASE}/jobs`, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!uploadRes.ok) {
-        const errorData = await uploadRes.json().catch(() => ({}));
-        throw new Error(errorData.error || `OMR service rejected upload with HTTP ${uploadRes.status}`);
-      }
-
-      const uploadData = await uploadRes.json();
+      const uploadData = await submitScoreJob(file, effectiveFilename, signal);
       jobId = uploadData.jobId;
+      onProgress?.({
+        status: 'queued',
+        jobId,
+        stageMessage: 'Preparing your score...'
+      });
     } catch (err: any) {
-      const failureMsg = 'OMR service is not connected. Transcription service unavailable.';
+      const failureMsg = err.code === 'NETWORK_ERROR'
+        ? 'Transcription is temporarily unavailable.'
+        : err.message || 'Failed to upload score to recognition engine.';
       onProgress?.({
         status: 'unconnected',
         stageMessage: failureMsg,
-        error: err.message || failureMsg
+        error: failureMsg
       });
       throw new Error(failureMsg);
     }
 
-    // 2. Poll real OMR job status
-    let completed = false;
-    let attempts = 0;
-    const maxAttempts = 180; // 3 minutes timeout
+    // 2. Poll real OMR job status via GET /jobs/:jobId
+    const result = await pollJobUntilComplete(
+      jobId,
+      (job: OMRJobStatusResponse) => {
+        let userStage = job.stageMessage;
+        if (job.status === 'queued') {
+          userStage = 'Preparing your score...';
+        } else if (job.status === 'processing' && (!job.stageMessage || job.stageMessage.includes('processing'))) {
+          userStage = 'Reading musical notation...';
+        }
 
-    while (!completed && attempts < maxAttempts) {
-      await new Promise(r => setTimeout(r, 1000));
-      attempts++;
-
-      try {
-        const statusRes = await fetch(`${OMR_API_BASE}/jobs/${jobId}`);
-        if (!statusRes.ok) continue;
-
-        const job = await statusRes.json();
         onProgress?.({
           status: job.status,
-          stageMessage: job.stageMessage || `Recognizing notation (${job.status})...`,
-          progressPercent: job.progress
+          jobId: job.id,
+          stageMessage: userStage || 'Reading musical notation...'
         });
+      },
+      signal
+    );
 
-        if (job.status === 'completed') {
-          completed = true;
-          break;
-        }
-
-        if (job.status === 'failed') {
-          throw new Error(job.error || 'Optical Music Recognition failed on this score.');
-        }
-      } catch (pollErr: any) {
-        if (pollErr.message.includes('failed')) throw pollErr;
-      }
-    }
-
-    if (!completed) {
-      throw new Error('Recognition timed out while processing score.');
-    }
-
-    // 3. Fetch real generated MusicXML
-    onProgress?.({
-      status: 'exporting',
-      stageMessage: 'Retrieving recognized MusicXML transcription...',
-      progressPercent: 95
-    });
-
-    const resultRes = await fetch(`${OMR_API_BASE}/jobs/${jobId}/result`);
-    if (!resultRes.ok) {
-      throw new Error('Failed to retrieve MusicXML result from OMR service.');
-    }
-
-    const resultData = await resultRes.json();
-    const rawXml = resultData.musicXml;
-
+    const rawXml = result.musicXml;
     if (!rawXml || typeof rawXml !== 'string' || !rawXml.includes('<score-partwise')) {
       throw new Error('Invalid or empty MusicXML returned by recognition engine.');
     }
 
-    // 4. Parse MusicXML to structured ScoreProject
-    return this.parseMusicXmlToScore(
+    onProgress?.({
+      status: 'completed',
+      jobId,
+      stageMessage: 'Transcription complete'
+    });
+
+    // 3. Parse MusicXML into complete ScoreProject
+    const scoreProject = this.parseMusicXmlToScore(
       rawXml,
-      file.name,
-      pageUrls[0] || URL.createObjectURL(file),
+      effectiveFilename,
+      pageUrls[0] || (file instanceof File ? URL.createObjectURL(file) : ''),
       pageUrls,
-      file.type,
-      file.size
+      effectiveType,
+      effectiveSize
     );
+
+    // Attach real backend jobId
+    scoreProject.jobId = jobId;
+
+    return scoreProject;
   }
 
   /**
@@ -245,7 +213,6 @@ class OMRService {
       const partId = partElem.getAttribute('id') || `P${pIndex + 1}`;
       const fullName = partNameMap.get(partId) || `Part ${pIndex + 1}`;
       
-      // Derive short name (e.g. Trumpet in Bb -> Tpt 1, Soprano -> S)
       let shortName = fullName.split(' ')[0] || `P${pIndex + 1}`;
       if (fullName.toLowerCase() === 'soprano') shortName = 'S';
       else if (fullName.toLowerCase() === 'alto') shortName = 'A';
@@ -256,7 +223,6 @@ class OMRService {
       const measureElems = Array.from(partElem.querySelectorAll('measure'));
       if (measureElems.length > maxMeasures) maxMeasures = measureElems.length;
 
-      // Clef check
       const clefSign = partElem.querySelector('clef > sign')?.textContent?.toLowerCase();
       const clef: 'treble' | 'bass' | 'alto' | 'tenor' = 
         clefSign === 'f' ? 'bass' : clefSign === 'c' ? 'alto' : 'treble';
@@ -317,13 +283,15 @@ class OMRService {
       };
     });
 
-    // Detect general arrangement type
+    // Detect general arrangement type from genuine instrumentation
     let arrangementType = 'Score';
     const names = parts.map(p => p.name.toLowerCase());
     if (names.some(n => n.includes('soprano')) && names.some(n => n.includes('bass'))) {
       arrangementType = 'SATB Choir';
     } else if (names.some(n => n.includes('trumpet') || n.includes('horn') || n.includes('trombone') || n.includes('tuba'))) {
       arrangementType = 'Brass / Ensemble';
+    } else if (names.some(n => n.includes('piano') || n.includes('keyboard') || n.includes('organ'))) {
+      arrangementType = 'Keyboard';
     } else if (parts.length > 4) {
       arrangementType = 'Orchestral / Multi-part';
     } else if (parts.length === 1) {
@@ -355,3 +323,4 @@ class OMRService {
 }
 
 export const omrService = new OMRService();
+export { OMR_API_URL };
