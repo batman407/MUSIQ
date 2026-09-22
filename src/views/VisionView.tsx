@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Camera, Upload, Eye, FileText, ChevronLeft, ChevronRight, 
   CheckCircle2, Download, ArrowLeft, RefreshCw, 
-  Music, XCircle, Columns, Maximize2
+  Music, Music2, XCircle, Columns, Maximize2
 } from 'lucide-react';
 import { ScoreProject } from '../types';
 import { omrService, OMRJobProgress, OMRHealthStatus } from '../services/omrService';
@@ -11,6 +11,11 @@ import { Button } from '../components/common/Button';
 import { MusiqMark } from '../components/brand/MusiqLogo';
 import { MusicXmlViewer } from '../components/notation/MusicXmlViewer';
 import { ExportModal } from '../components/notation/ExportModal';
+import { NotesView } from '../components/transcription/NotesView';
+import { SolfaView } from '../components/transcription/SolfaView';
+import { parseMusicXml, ParsedScore } from '../services/musicXmlParser';
+
+export type VisionTabMode = 'original' | 'score' | 'notes' | 'solfa' | 'compare';
 
 interface VisionViewProps {
   currentScore: ScoreProject | null;
@@ -25,7 +30,8 @@ export const VisionView: React.FC<VisionViewProps> = ({
 }) => {
   // Score state
   const [score, setScore] = useState<ScoreProject | null>(currentScore);
-  const [activeTab, setActiveTab] = useState<'original' | 'transcribed' | 'compare'>('original');
+  const [activeTab, setActiveTab] = useState<VisionTabMode>('original');
+  const [selectedPartId, setSelectedPartId] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [uploadedFile, setUploadedFile] = useState<File | Blob | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
@@ -70,12 +76,23 @@ export const VisionView: React.FC<VisionViewProps> = ({
     };
   }, []);
 
+  // Parse structured MusicXML into generic ParsedScore
+  const parsedScore = useMemo<ParsedScore | null>(() => {
+    if (!score?.rawMusicXml) return null;
+    try {
+      return parseMusicXml(score.rawMusicXml, score.title || score.originalFilename);
+    } catch (e) {
+      console.error('[MusicXML Parse Error]', e);
+      return null;
+    }
+  }, [score?.rawMusicXml, score?.title, score?.originalFilename]);
+
   // Sync currentScore from props
   useEffect(() => {
     if (currentScore) {
       setScore(currentScore);
       if (currentScore.rawMusicXml) {
-        setActiveTab('transcribed');
+        setActiveTab('score');
       }
     }
   }, [currentScore]);
@@ -150,7 +167,7 @@ export const VisionView: React.FC<VisionViewProps> = ({
         try {
           const newScore = omrService.parseMusicXmlToScore(xmlText, file.name, '', [], file.type, file.size);
           setScore(newScore);
-          setActiveTab('transcribed');
+          setActiveTab('score');
           storageService.saveScore(newScore);
           onScoreTranscribed(newScore);
         } catch (err: any) {
@@ -228,7 +245,7 @@ export const VisionView: React.FC<VisionViewProps> = ({
       );
 
       setScore(transcribedScore);
-      setActiveTab('transcribed');
+      setActiveTab('score');
       storageService.saveScore(transcribedScore);
       onScoreTranscribed(transcribedScore);
     } catch (err: any) {
@@ -539,31 +556,49 @@ export const VisionView: React.FC<VisionViewProps> = ({
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Tab Switcher: ORIGINAL vs TRANSCRIPTION (plus Compare on desktop) */}
+          {/* Tab Switcher: ORIGINAL | SCORE | NOTES | SOL-FA (plus COMPARE on desktop) */}
           <div className="bg-[#18181D] border border-[#27272D] p-1 rounded-xl flex items-center gap-1 text-xs font-mono font-bold">
             <button
               onClick={() => setActiveTab('original')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'original' ? 'bg-[#8B5CF6] text-white' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+                activeTab === 'original' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
               }`}
             >
               <FileText size={13} />
               <span>ORIGINAL</span>
             </button>
             <button
-              onClick={() => setActiveTab('transcribed')}
+              onClick={() => setActiveTab('score')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'transcribed' ? 'bg-[#8B5CF6] text-white' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+                activeTab === 'score' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
               }`}
             >
               <Music size={13} />
-              <span>TRANSCRIPTION</span>
+              <span>SCORE</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('notes')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'notes' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+              }`}
+            >
+              <Music2 size={13} />
+              <span>NOTES</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('solfa')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'solfa' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+              }`}
+            >
+              <FileText size={13} />
+              <span>SOL-FA</span>
             </button>
             {/* Desktop Compare Toggle */}
             <button
               onClick={() => setActiveTab('compare')}
               className={`hidden md:flex px-3 py-1.5 rounded-lg transition-colors cursor-pointer items-center gap-1.5 ${
-                activeTab === 'compare' ? 'bg-[#8B5CF6] text-white' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+                activeTab === 'compare' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
               }`}
             >
               <Columns size={13} />
@@ -690,8 +725,46 @@ export const VisionView: React.FC<VisionViewProps> = ({
             )}
           </div>
         </div>
+      ) : activeTab === 'notes' ? (
+        /* ================= 4C. NOTES TRANSCRIPTION TAB ================= */
+        <div className="space-y-6">
+          {parsedScore ? (
+            <NotesView
+              parsedScore={parsedScore}
+              selectedPartId={selectedPartId}
+              onSelectPart={setSelectedPartId}
+            />
+          ) : (
+            <div className="p-12 text-center bg-[#111114] border border-[#27272D] rounded-2xl space-y-4">
+              <Music2 size={40} className="mx-auto text-[#67E8F9]" />
+              <h3 className="text-lg font-bold text-[#F4F1EA]">No Note Names available</h3>
+              <p className="text-xs text-[#9A9AA3] max-w-md mx-auto">
+                Submit this score to the recognition engine to extract note names from MusicXML.
+              </p>
+            </div>
+          )}
+        </div>
+      ) : activeTab === 'solfa' ? (
+        /* ================= 4D. TONIC SOL-FA TAB ================= */
+        <div className="space-y-6">
+          {parsedScore ? (
+            <SolfaView
+              parsedScore={parsedScore}
+              selectedPartId={selectedPartId}
+              onSelectPart={setSelectedPartId}
+            />
+          ) : (
+            <div className="p-12 text-center bg-[#111114] border border-[#27272D] rounded-2xl space-y-4">
+              <FileText size={40} className="mx-auto text-[#8B5CF6]" />
+              <h3 className="text-lg font-bold text-[#F4F1EA]">No Tonic Sol-Fa available</h3>
+              <p className="text-xs text-[#9A9AA3] max-w-md mx-auto">
+                Submit this score to the recognition engine to compute Movable-Do sol-fa from MusicXML.
+              </p>
+            </div>
+          )}
+        </div>
       ) : (
-        /* ================= 4C. TRANSCRIPTION NOTATION TAB (OSMD) ================= */
+        /* ================= 4E. SCORE NOTATION TAB (OSMD) ================= */
         <div className="space-y-6">
           {score?.rawMusicXml ? (
             <div className="space-y-4">

@@ -4,6 +4,8 @@ import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 import { ScoreProject } from '../../types';
 import { Button } from '../common/Button';
+import { parseMusicXml } from '../../services/musicXmlParser';
+import { generateNotesPlainText, generateSolfaPlainText } from '../../services/solfaEngine';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -245,6 +247,50 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     }
   };
 
+  // 5. Export Notes as TXT — Requirement 18
+  const handleExportNotesTxt = () => {
+    if (!score.rawMusicXml) return;
+    setIsExporting('notes-txt');
+    try {
+      const parsed = parseMusicXml(score.rawMusicXml, sourceName);
+      const text = generateNotesPlainText(parsed.title, parsed.keySignature, parsed.timeSignature, parsed.parts);
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sourceName} - MUSIQ-notes.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSuccessMessage('Note-name transcription exported as text (.txt).');
+    } catch (err: any) {
+      console.error('[Export Notes TXT Error]', err);
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
+  // 6. Export Tonic Sol-Fa as TXT — Requirement 19
+  const handleExportSolfaTxt = () => {
+    if (!score.rawMusicXml) return;
+    setIsExporting('solfa-txt');
+    try {
+      const parsed = parseMusicXml(score.rawMusicXml, sourceName);
+      const text = generateSolfaPlainText(parsed.title, parsed.keySignature, parsed.timeSignature, parsed.parts);
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sourceName} - MUSIQ-solfa.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSuccessMessage('Tonic Sol-Fa transcription exported as text (.txt).');
+    } catch (err: any) {
+      console.error('[Export Solfa TXT Error]', err);
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
   const hasMusicXml = Boolean(score.rawMusicXml);
 
   return (
@@ -336,6 +382,66 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div className="text-[10px] font-mono text-[#67E8F9] mt-3 flex items-center gap-1 font-semibold">
                 <Download size={12} />
                 <span>{isExporting === 'mxl' ? 'Packaging...' : 'Download .mxl'}</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* SECTION 2: HUMAN-READABLE TEXT TRANSCRIPTIONS */}
+        <div className="space-y-3 pt-2 border-t border-[#27272D]/60">
+          <div className="text-xs font-mono uppercase tracking-wider text-[#4ADE80] font-semibold flex items-center gap-2">
+            <FileText size={14} />
+            <span>Human-Readable Text Transcriptions</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Notes as TXT */}
+            <button
+              onClick={handleExportNotesTxt}
+              disabled={!hasMusicXml || isExporting !== null}
+              className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all ${
+                hasMusicXml
+                  ? 'bg-[#18181D] border-[#27272D] hover:border-[#4ADE80] hover:bg-[#1F1F26] cursor-pointer'
+                  : 'bg-[#18181D]/40 border-[#27272D]/50 opacity-40 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm text-[#F4F1EA]">Notes as TXT</span>
+                <span className="px-1.5 py-0.5 rounded bg-[#4ADE80]/20 text-[#4ADE80] text-[10px] font-mono font-bold">
+                  Pitches
+                </span>
+              </div>
+              <p className="text-[11px] text-[#9A9AA3] mt-2 leading-relaxed">
+                Plain-text transcription with pitch names (e.g. C4, D4, [C4 E4 G4]), parts, and measures.
+              </p>
+              <div className="text-[10px] font-mono text-[#4ADE80] mt-3 flex items-center gap-1 font-semibold">
+                <Download size={12} />
+                <span>{isExporting === 'notes-txt' ? 'Exporting...' : 'Download Notes TXT'}</span>
+              </div>
+            </button>
+
+            {/* Sol-Fa as TXT */}
+            <button
+              onClick={handleExportSolfaTxt}
+              disabled={!hasMusicXml || isExporting !== null}
+              className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all ${
+                hasMusicXml
+                  ? 'bg-[#18181D] border-[#27272D] hover:border-[#67E8F9] hover:bg-[#1F1F26] cursor-pointer'
+                  : 'bg-[#18181D]/40 border-[#27272D]/50 opacity-40 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm text-[#F4F1EA]">Sol-Fa as TXT</span>
+                <span className="px-1.5 py-0.5 rounded bg-[#67E8F9]/20 text-[#67E8F9] text-[10px] font-mono font-bold">
+                  Movable-Do
+                </span>
+              </div>
+              <p className="text-[11px] text-[#9A9AA3] mt-2 leading-relaxed">
+                Complete Tonic Sol-Fa transcription (e.g. do re mi sol, [do mi sol]) aligned by measure.
+              </p>
+              <div className="text-[10px] font-mono text-[#67E8F9] mt-3 flex items-center gap-1 font-semibold">
+                <Download size={12} />
+                <span>{isExporting === 'solfa-txt' ? 'Exporting...' : 'Download Sol-Fa TXT'}</span>
               </div>
             </button>
           </div>
