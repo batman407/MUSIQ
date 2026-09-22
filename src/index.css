@@ -134,3 +134,28 @@
 .h-screen-safe {
   height: 100dvh;
 }
+
+/* Print Styles for Professional Sheet Music */
+@media print {
+  body, html {
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    color-scheme: light !important;
+  }
+
+  header, nav, aside, footer, button, .print\:hidden {
+    display: none !important;
+  }
+
+  .solfa-sheet-page {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 24px 32px !important;
+    width: 100% !important;
+    min-height: auto !important;
+    transform: none !important;
+    page-break-after: always;
+  }
+}
+

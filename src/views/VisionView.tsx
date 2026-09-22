@@ -13,6 +13,7 @@ import { MusicXmlViewer } from '../components/notation/MusicXmlViewer';
 import { ExportModal } from '../components/notation/ExportModal';
 import { NotesView } from '../components/transcription/NotesView';
 import { SolfaView } from '../components/transcription/SolfaView';
+import { TonicSolfaSheet } from '../components/transcription/TonicSolfaSheet';
 import { parseMusicXml, ParsedScore } from '../services/musicXmlParser';
 
 export type VisionTabMode = 'original' | 'score' | 'notes' | 'solfa' | 'compare';
@@ -31,6 +32,7 @@ export const VisionView: React.FC<VisionViewProps> = ({
   // Score state
   const [score, setScore] = useState<ScoreProject | null>(currentScore);
   const [activeTab, setActiveTab] = useState<VisionTabMode>('original');
+  const [solfaMode, setSolfaMode] = useState<'reading' | 'sheet'>('sheet');
   const [selectedPartId, setSelectedPartId] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [uploadedFile, setUploadedFile] = useState<File | Blob | null>(null);
@@ -745,14 +747,50 @@ export const VisionView: React.FC<VisionViewProps> = ({
           )}
         </div>
       ) : activeTab === 'solfa' ? (
-        /* ================= 4D. TONIC SOL-FA TAB ================= */
+        /* ================= 4D. TONIC SOL-FA TAB (SHEET + READING MODES) ================= */
         <div className="space-y-6">
+          {/* Sub-mode Switcher: SHEET vs READING */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#27272D]/60 pb-3 print:hidden">
+            <div className="text-xs font-mono text-[#9A9AA3] flex items-center gap-2">
+              <span>SOL-FA VIEW MODE:</span>
+              <span className="text-[#A78BFA] font-bold">
+                {solfaMode === 'sheet' ? 'Traditional Choral Sheet (Printable A4)' : 'Interactive Reading Cards'}
+              </span>
+            </div>
+
+            <div className="bg-[#18181D] border border-[#27272D] p-1 rounded-xl flex items-center gap-1 text-xs font-mono font-bold">
+              <button
+                onClick={() => setSolfaMode('sheet')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  solfaMode === 'sheet' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+                }`}
+              >
+                <span>SHEET</span>
+              </button>
+              <button
+                onClick={() => setSolfaMode('reading')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  solfaMode === 'reading' ? 'bg-[#8B5CF6] text-white shadow' : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+                }`}
+              >
+                <span>READING</span>
+              </button>
+            </div>
+          </div>
+
           {parsedScore ? (
-            <SolfaView
-              parsedScore={parsedScore}
-              selectedPartId={selectedPartId}
-              onSelectPart={setSelectedPartId}
-            />
+            solfaMode === 'sheet' ? (
+              <TonicSolfaSheet
+                parsedScore={parsedScore}
+                onOpenExport={() => setIsExportOpen(true)}
+              />
+            ) : (
+              <SolfaView
+                parsedScore={parsedScore}
+                selectedPartId={selectedPartId}
+                onSelectPart={setSelectedPartId}
+              />
+            )
           ) : (
             <div className="p-12 text-center bg-[#111114] border border-[#27272D] rounded-2xl space-y-4">
               <FileText size={40} className="mx-auto text-[#8B5CF6]" />
