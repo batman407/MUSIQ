@@ -54,6 +54,11 @@ export interface ParsedMeasure {
   keySignature: KeySignatureInfo;
   timeSignature: string;
   events: ParsedEvent[];
+  rehearsalMark?: string;
+  directionWords?: string;
+  tempoBpm?: number;
+  isKeyChange?: boolean;
+  isTimeChange?: boolean;
 }
 
 export interface ParsedPart {
@@ -61,6 +66,10 @@ export interface ParsedPart {
   name: string;
   shortName: string;
   clef: 'treble' | 'bass' | 'alto' | 'tenor';
+  clefsByStaff?: Record<number, 'treble' | 'bass' | 'alto' | 'tenor'>;
+  stavesCount?: number;
+  groupName?: string;
+  transposition?: { chromatic: number; diatonic?: number };
   color: string;
   measures: ParsedMeasure[];
 }
@@ -68,6 +77,8 @@ export interface ParsedPart {
 export interface ParsedScore {
   title: string;
   composer?: string;
+  arranger?: string;
+  lyricist?: string;
   keySignature: KeySignatureInfo;
   timeSignature: string;
   tempoBpm?: number;
@@ -199,11 +210,17 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
   const movementTitle = getTextContent(getDescendant(doc, 'movement-title'));
   
   let composer: string | undefined;
+  let arranger: string | undefined;
+  let lyricist: string | undefined;
   const creatorElems = getDescendants(doc, 'creator');
   for (const c of creatorElems) {
-    if (c.getAttribute && c.getAttribute('type') === 'composer') {
+    const type = c.getAttribute?.('type');
+    if (type === 'composer' && !composer) {
       composer = getTextContent(c);
-      break;
+    } else if (type === 'arranger' && !arranger) {
+      arranger = getTextContent(c);
+    } else if (type === 'lyricist' && !lyricist) {
+      lyricist = getTextContent(c);
     }
   }
   if (!composer && creatorElems.length > 0) {
@@ -254,9 +271,10 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
     const name = partNameMap.get(partId) || `Part ${pIdx + 1}`;
     const abbr = rawPartAbbrMap.get(partId) || name.slice(0, 4);
 
-    const clefSign = getTextContent(getDescendant(partElem, 'sign'))?.toLowerCase();
-    const clef: 'treble' | 'bass' | 'alto' | 'tenor' = 
-      clefSign === 'f' ? 'bass' : clefSign === 'c' ? 'alto' : 'treble';
+    let explicitStaves = 1;
+    let maxStaffFound = 1;
+    const clefsByStaff: Record<number, 'treble' | 'bass' | 'alto' | 'tenor'> = {};
+    let transposition: { chromatic: number; diatonic?: number } | undefined;
 
     const measureElems = getDescendants(partElem, 'measure');
     if (measureElems.length > maxMeasures) maxMeasures = measureElems.length;
@@ -266,13 +284,50 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
 
     const measures: ParsedMeasure[] = measureElems.map((mElem, mIdx) => {
       const mNum = parseInt(mElem.getAttribute('number') || `${mIdx + 1}`, 10);
+      let isKeyChange = false;
+      let isTimeChange = false;
+      let measureTempo: number | undefined;
+      let rehearsalMark: string | undefined;
+      let directionWords: string | undefined;
+
+      // Check Attributes: Staves, Clefs, Transpose
+      const stavesElem = getDescendant(mElem, 'staves');
+      if (stavesElem) {
+        const sVal = parseInt(getTextContent(stavesElem) || '1', 10);
+        if (!isNaN(sVal) && sVal > explicitStaves) explicitStaves = sVal;
+      }
+
+      const clefElems = getDescendants(mElem, 'clef');
+      clefElems.forEach(cElem => {
+        const staffNum = parseInt(cElem.getAttribute('number') || '1', 10);
+        const sign = getTextContent(getDescendant(cElem, 'sign'))?.toLowerCase();
+        const clefVal: 'treble' | 'bass' | 'alto' | 'tenor' =
+          sign === 'f' ? 'bass' : sign === 'c' ? 'alto' : 'treble';
+        clefsByStaff[staffNum] = clefVal;
+      });
+
+      const transposeElem = getDescendant(mElem, 'transpose');
+      if (transposeElem && !transposition) {
+        const chromElem = getDescendant(transposeElem, 'chromatic');
+        const diatElem = getDescendant(transposeElem, 'diatonic');
+        if (chromElem) {
+          transposition = {
+            chromatic: parseInt(getTextContent(chromElem) || '0', 10),
+            diatonic: diatElem ? parseInt(getTextContent(diatElem) || '0', 10) : undefined
+          };
+        }
+      }
 
       // Check Key changes
       const fifthsElem = getDescendant(mElem, 'fifths');
       if (fifthsElem) {
         const fifths = parseInt(getTextContent(fifthsElem) || '0', 10);
         const modeStr = getTextContent(getDescendant(mElem, 'mode'));
-        currentKey = getKeySignatureInfo(fifths, modeStr);
+        const newKey = getKeySignatureInfo(fifths, modeStr);
+        if (mIdx > 0 && (newKey.fifths !== currentKey.fifths || newKey.mode !== currentKey.mode)) {
+          isKeyChange = true;
+        }
+        currentKey = newKey;
         if (pIdx === 0 && mIdx === 0) {
           scoreKeySignature = currentKey;
         }
@@ -282,19 +337,35 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
       const beats = getTextContent(getDescendant(mElem, 'beats'));
       const beatType = getTextContent(getDescendant(mElem, 'beat-type'));
       if (beats && beatType) {
-        currentTimeSig = `${beats}/${beatType}`;
+        const newTimeSig = `${beats}/${beatType}`;
+        if (mIdx > 0 && newTimeSig !== currentTimeSig) {
+          isTimeChange = true;
+        }
+        currentTimeSig = newTimeSig;
         if (pIdx === 0 && mIdx === 0) {
           scoreTimeSignature = currentTimeSig;
         }
       }
 
-      // Check Tempo
+      // Check Directions (Rehearsal marks, words, tempo)
+      const rehearsalElem = getDescendant(mElem, 'rehearsal');
+      if (rehearsalElem) {
+        rehearsalMark = getTextContent(rehearsalElem);
+      }
+      const wordsElem = getDescendant(mElem, 'words');
+      if (wordsElem) {
+        directionWords = getTextContent(wordsElem);
+      }
+
       const soundElems = getDescendants(mElem, 'sound');
       for (const s of soundElems) {
         const tVal = s.getAttribute('tempo');
-        if (tVal && !tempoBpm) {
+        if (tVal) {
           const t = parseFloat(tVal);
-          if (!isNaN(t) && t > 20) tempoBpm = Math.round(t);
+          if (!isNaN(t) && t > 20) {
+            measureTempo = Math.round(t);
+            if (!tempoBpm) tempoBpm = measureTempo;
+          }
         }
       }
 
@@ -312,6 +383,8 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
         const dots = getDescendants(nElem, 'dot').length;
         const voice = parseInt(getTextContent(getDescendant(nElem, 'voice')) || '1', 10);
         const staff = parseInt(getTextContent(getDescendant(nElem, 'staff')) || '1', 10);
+        if (staff > maxStaffFound) maxStaffFound = staff;
+
         const lyric = getTextContent(getDescendant(nElem, 'text'));
         const tieElem = getDescendant(nElem, 'tie');
         const tie = tieElem?.getAttribute('type') as 'start' | 'stop' | undefined;
@@ -340,7 +413,6 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
         };
 
         if (isChord && events.length > 0) {
-          // Add note to current chord event
           const lastEvent = events[events.length - 1];
           lastEvent.isChord = true;
           lastEvent.notes.push(parsedNote);
@@ -348,7 +420,6 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
             lastEvent.lyric = lyric;
           }
         } else {
-          // New musical event
           const event: ParsedEvent = {
             id: `m${mNum}-e${nIdx + 1}`,
             isRest,
@@ -369,15 +440,26 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
         number: mNum,
         keySignature: currentKey,
         timeSignature: currentTimeSig,
-        events
+        events,
+        rehearsalMark,
+        directionWords,
+        tempoBpm: measureTempo,
+        isKeyChange,
+        isTimeChange
       };
     });
+
+    const primaryClef = clefsByStaff[1] || (clefsByStaff[2] ? 'bass' : 'treble');
+    const finalStavesCount = Math.max(explicitStaves, maxStaffFound);
 
     return {
       id: partId,
       name,
       shortName: abbr,
-      clef,
+      clef: primaryClef,
+      clefsByStaff: Object.keys(clefsByStaff).length > 0 ? clefsByStaff : { 1: primaryClef },
+      stavesCount: finalStavesCount,
+      transposition,
       color: PART_PALETTE[pIdx % PART_PALETTE.length],
       measures
     };
@@ -386,6 +468,8 @@ export function parseMusicXml(xmlString: string, fallbackTitle = 'Score'): Parse
   return {
     title,
     composer,
+    arranger,
+    lyricist,
     keySignature: scoreKeySignature,
     timeSignature: scoreTimeSignature,
     tempoBpm,
