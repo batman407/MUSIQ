@@ -15,8 +15,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-
-  const scores = storageService.getScores();
+  const [scores, setScores] = useState<ScoreProject[]>(() => storageService.getScores());
 
   const filteredScores = scores.filter(score => {
     if (showFavoritesOnly && !score.isFavorite) return false;
@@ -40,9 +39,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     e.stopPropagation();
     if (confirm('Delete this transcription from your library?')) {
       storageService.deleteScore(scoreId);
-      // Trigger rerender
-      setSearchQuery(prev => prev);
+      setScores(storageService.getScores());
     }
+  };
+
+  const handleToggleFavorite = (scoreId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    storageService.toggleFavoriteScore(scoreId);
+    setScores(storageService.getScores());
   };
 
   return (
@@ -165,15 +169,24 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
                 <div className="flex items-center justify-between text-[11px] font-mono text-[#9A9AA3] pt-3 border-t border-[#27272D]/60 mt-3">
                   <span>{new Date(score.createdAt).toLocaleDateString()}</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => handleToggleFavorite(score.id, e)}
+                      className={`p-1.5 rounded hover:bg-[#18181D] transition-colors ${
+                        score.isFavorite ? 'text-[#F59E0B]' : 'text-[#6E6E77] hover:text-[#F4F1EA]'
+                      }`}
+                      title={score.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    >
+                      <Star size={13} className={score.isFavorite ? 'fill-[#F59E0B]' : ''} />
+                    </button>
                     <button
                       onClick={(e) => handleDeleteScore(score.id, e)}
-                      className="p-1 rounded hover:bg-[#18181D] hover:text-[#EF4444] text-[#6E6E77] transition-colors"
+                      className="p-1.5 rounded hover:bg-[#18181D] hover:text-[#EF4444] text-[#6E6E77] transition-colors"
                       title="Delete Score"
                     >
                       <Trash2 size={13} />
                     </button>
-                    <span className="text-[#8B5CF6] group-hover:translate-x-0.5 transition-transform font-semibold">
+                    <span className="text-[#8B5CF6] group-hover:translate-x-0.5 transition-transform font-semibold ml-1">
                       Open →
                     </span>
                   </div>

@@ -169,6 +169,30 @@ export const storageService = {
     this.saveLibraryItems(libItems.filter(i => i.originalRefId !== scoreId));
   },
 
+  toggleFavoriteScore(scoreId: string): boolean {
+    const current = this.getScores();
+    let newFav = false;
+    const updated = current.map(s => {
+      if (s.id === scoreId) {
+        newFav = !s.isFavorite;
+        return { ...s, isFavorite: newFav };
+      }
+      return s;
+    });
+    localStorage.setItem(STORAGE_KEYS.SCORES, JSON.stringify(updated));
+
+    const libItems = this.getLibraryItems();
+    this.saveLibraryItems(
+      libItems.map(i => {
+        if (i.originalRefId === scoreId) {
+          return { ...i, favorite: newFav };
+        }
+        return i;
+      })
+    );
+    return newFav;
+  },
+
   getSettings(): MusiqSettings {
     const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (!data) return DEFAULT_SETTINGS;
