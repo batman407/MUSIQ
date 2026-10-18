@@ -67,10 +67,12 @@ assert(getHumanReadableStaffLabel('Alto', 1, 1, 1, 1) === 'A', 'Alto -> A');
 assert(getHumanReadableStaffLabel('Tenor', 1, 1, 1, 1) === 'T', 'Tenor -> T');
 assert(getHumanReadableStaffLabel('Bass', 1, 1, 1, 1) === 'B', 'Bass -> B');
 assert(getHumanReadableStaffLabel('Trumpet', 1, 1, 1, 1) === 'Trumpet', 'Trumpet single voice -> Trumpet');
-assert(getHumanReadableStaffLabel('Trumpet', 1, 1, 1, 2) === 'Trumpet V1', 'Trumpet multi-voice -> Trumpet V1');
+assert(getHumanReadableStaffLabel('Trumpet', 1, 1, 1, 2) === 'Trumpet', 'Final sheet mode: Trumpet multi-voice stays Trumpet (no raw V1)');
+assert(getHumanReadableStaffLabel('Trumpet', 1, 1, 1, 2, undefined, true) === 'Trumpet V1', 'Diagnostics mode: Trumpet multi-voice -> Trumpet V1');
 assert(getHumanReadableStaffLabel('Organ', 1, 2, 1, 1) === 'Organ RH', 'Organ staff 1 -> Organ RH');
 assert(getHumanReadableStaffLabel('Organ', 2, 2, 1, 1) === 'Organ LH', 'Organ staff 2 -> Organ LH');
-assert(getHumanReadableStaffLabel('Organ', 1, 2, 2, 2) === 'Organ RH V2', 'Organ staff 1 voice 2 -> Organ RH V2');
+assert(getHumanReadableStaffLabel('Organ', 1, 2, 2, 2) === 'Organ RH', 'Final sheet mode: Organ staff 1 voice 2 stays Organ RH (no raw V2)');
+assert(getHumanReadableStaffLabel('Organ', 1, 2, 2, 2, undefined, true) === 'Organ RH V2', 'Diagnostics mode: Organ staff 1 voice 2 -> Organ RH V2');
 
 // Legacy helpers
 assert(getVoiceShortLabel('Soprano', 0) === 'S', 'Legacy Soprano -> S');

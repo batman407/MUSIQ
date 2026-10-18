@@ -7,18 +7,26 @@
  *
  * Principles:
  * 1. Complete score transcription: Trumpet, Solo, Soprano, Alto, Tenor, Bass, Organ RH/LH, Piano, etc.
- * 2. Human-readable labels (no raw P1-S1-V1 IDs, no generic V1/V2/Pno hiding instrument identity).
- * 3. Suppression of empty voices: only render rows with meaningful musical events in that system.
+ * 2. Human-readable labels (no raw P1-S1-V1 IDs, no raw V1..V8 voice IDs).
+ * 3. Four-Part SATB Continuity: for SATB scores, rows S, A, T, B are preserved across every system.
  * 4. Boxed rectangular measure cells with true CSS/SVG alignment.
  * 5. Dynamic measures per system & dynamic measure widths via measure-density estimator.
  * 6. Simultaneous chord typesetting: stacked vertical pitch sol-fa syllables, never raw array brackets.
- * 7. Aligned lyrics row positioned directly beneath the vocal voice that sings them.
+ * 7. Aligned lyrics row positioned directly beneath the system or vocal voice.
  * 8. Measure numbers, rehearsal marks, tempo marks, and modulations positioned above the system.
  * 9. Deterministic A4 portrait pagination: readability > page count.
  */
 
 import type { ParsedScore, ParsedPart, ParsedMeasure, ParsedEvent, KeySignatureInfo, ParsedNote } from './musicXmlParser.ts';
 import { noteToSolfa } from './solfaEngine.ts';
+import {
+  inferScoreStructure,
+  extractSatbLogicalScore,
+  extractKeyboardLogicalScore,
+  normalizeScoreTitle,
+  type StructureInferenceMode,
+  type StructureInferenceResult
+} from './scoreStructureInference.ts';
 
 export interface SolfaBeatCell {
   text: string; // e.g. "d", "d .r", "-", " "
@@ -75,6 +83,7 @@ export interface SolfaSystem {
   measuresRange: [number, number]; // [startMeasure, endMeasure]
   measureHeaders: SystemMeasureHeader[];
   voiceRows: SolfaVoiceSystemRow[];
+  sharedLyricsRow?: Array<{ measureNumber: number; lyricTexts: string[] }>;
 }
 
 export interface SolfaSheetPage {
@@ -120,6 +129,7 @@ export interface TypesetOptions {
   partLabelOverrides?: Record<string, string>;
   keyOverride?: KeySignatureInfo;
   titleOverride?: string;
+  structureMode?: StructureInferenceMode;
 }
 
 /**
@@ -176,6 +186,7 @@ export function formatEventSolfaText(event: ParsedEvent, key: KeySignatureInfo):
 
 /**
  * Derives human-readable staff and part labels according to professional score conventions.
+ * CRITICAL: NEVER outputs raw voice IDs (V1..V8) in final Sheet mode.
  */
 export function getHumanReadableStaffLabel(
   partName: string,
@@ -183,7 +194,8 @@ export function getHumanReadableStaffLabel(
   totalStavesInPart: number,
   voiceNum: number,
   totalActiveVoicesOnStaff: number,
-  userOverride?: string
+  userOverride?: string,
+  isDiagnostic = false
 ): string {
   if (userOverride) return userOverride;
 
@@ -200,21 +212,22 @@ export function getHumanReadableStaffLabel(
   if (lower === 'bass 2') return 'B2';
 
   // 2. Multi-staff instruments (Organ, Piano, Keyboard, Harpsichord, Harp)
+  if (lower.endsWith(' rh') || lower.endsWith(' lh')) {
+    return partName;
+  }
   if (totalStavesInPart > 1 || lower.includes('organ') || lower.includes('piano') || lower.includes('keyboard')) {
     const baseName = lower.includes('organ') ? 'Organ' : lower.includes('piano') ? 'Piano' : partName;
     const staffHand = staffNum === 1 ? 'RH' : staffNum === 2 ? 'LH' : `Staff ${staffNum}`;
-    if (totalActiveVoicesOnStaff > 1) {
+    if (isDiagnostic && totalActiveVoicesOnStaff > 1) {
       return `${baseName} ${staffHand} V${voiceNum}`;
     }
     return `${baseName} ${staffHand}`;
   }
 
-  // 3. Single staff instruments with multiple voices
-  if (totalActiveVoicesOnStaff > 1) {
+  // 3. Single staff instruments
+  if (isDiagnostic && totalActiveVoicesOnStaff > 1) {
     return `${partName} V${voiceNum}`;
   }
-
-  // 4. Default instrument / part label
   return partName;
 }
 
@@ -315,9 +328,11 @@ export function layoutMeasureBeatsForVoice(
   }));
 
   // Filter events belonging to this specific staff and voice
+  // If voiceNum is -1 (logical staff mode), match all events on this staff
   const voiceEvents = measure.events.filter(e => {
     const s = e.staff || 1;
     const v = e.voice || 1;
+    if (voiceNum === -1) return s === staffNum;
     return s === staffNum && v === voiceNum;
   });
 
@@ -422,6 +437,7 @@ function estimateMeasureDensity(
     const events = measure.events.filter(e => {
       const s = e.staff || 1;
       const v = e.voice || 1;
+      if (sv.voiceNum === -1) return s === sv.staffNum && !e.isRest;
       return s === sv.staffNum && v === sv.voiceNum && !e.isRest;
     });
 
@@ -449,22 +465,36 @@ function estimateMeasureDensity(
 /**
  * Complete Tonic Sol-Fa Document Typesetting Engine V3
  * Produces structured A4 SolfaSheetPage[] preserving all parts, staves, and voices.
+ * Incorporates genuine Musical Structure Inference and logical voice separation.
  */
 export function layoutTonicSolfaDocument(
   parsedScore: ParsedScore,
   options?: TypesetOptions
 ): SolfaSheetPage[] {
-  const effectiveTitle = options?.titleOverride || parsedScore.title;
-  const effectiveKey = options?.keyOverride || parsedScore.keySignature;
+  // Step 1: Infer score structure and apply chosen mode
+  const inference = inferScoreStructure(parsedScore);
+  const requestedMode: StructureInferenceMode = options?.structureMode || 'AUTO';
+  const effectiveMode = requestedMode === 'AUTO' ? inference.detectedMode : requestedMode;
 
-  // 1. Filter out parts that user explicitly disabled in Score Structure Panel
+  // Step 2: Transform score to logical parts if SATB or KEYBOARD
+  let scoreToTypeset: ParsedScore = parsedScore;
+  if (effectiveMode === 'SATB') {
+    scoreToTypeset = extractSatbLogicalScore(parsedScore);
+  } else if (effectiveMode === 'KEYBOARD') {
+    scoreToTypeset = extractKeyboardLogicalScore(parsedScore);
+  }
+
+  const effectiveTitle = options?.titleOverride || normalizeScoreTitle(scoreToTypeset.title);
+  const effectiveKey = options?.keyOverride || scoreToTypeset.keySignature;
+
+  // Step 3: Filter out parts that user explicitly disabled
   const excludedIds = new Set(options?.excludedPartIds || []);
-  const activeParts = parsedScore.parts.filter(p => !excludedIds.has(p.id));
+  const activeParts = scoreToTypeset.parts.filter(p => !excludedIds.has(p.id));
 
-  const partsToTypeset = activeParts.length > 0 ? activeParts : parsedScore.parts;
-  const totalMeasures = parsedScore.measuresCount || 1;
+  const partsToTypeset = activeParts.length > 0 ? activeParts : scoreToTypeset.parts;
+  const totalMeasures = scoreToTypeset.measuresCount || 1;
 
-  // 2. Discover all (Part, Staff, Voice) units
+  // Step 4: Discover all logical rendering units
   interface StaffVoiceSpec {
     rowKey: string;
     partId: string;
@@ -494,24 +524,36 @@ export function layoutTonicSolfaDocument(
     const stavesCount = Math.max(part.stavesCount || 1, staffSet.size || 1);
 
     for (let s = 1; s <= stavesCount; s++) {
-      const voiceNums = Array.from(staffVoicesMap.get(s) || [1]).sort((a, b) => a - b);
       const clef = (part.clefsByStaff && part.clefsByStaff[s]) || (s === 2 ? 'bass' : part.clef);
 
-      voiceNums.forEach(v => {
+      // If effectiveMode is SATB or score parts are already logical single voices:
+      // Treat the staff as a unified logical voice, avoiding raw V1..V8 fragmentation
+      if (effectiveMode === 'SATB' || effectiveMode === 'KEYBOARD' || partsToTypeset.length >= 3) {
         allStaffVoices.push({
-          rowKey: `${part.id}-s${s}-v${v}`,
+          rowKey: `${part.id}-s${s}`,
           partId: part.id,
           partName: part.name,
           staffNum: s,
           totalStavesInPart: stavesCount,
-          voiceNum: v,
+          voiceNum: -1, // logical unified staff mode
           clef
         });
-      });
+      } else {
+        // Multi-voice on single instrument staff: collapse into single staff row to prevent V1..V8
+        allStaffVoices.push({
+          rowKey: `${part.id}-s${s}`,
+          partId: part.id,
+          partName: part.name,
+          staffNum: s,
+          totalStavesInPart: stavesCount,
+          voiceNum: -1,
+          clef
+        });
+      }
     }
   });
 
-  // 3. Compute dynamic measures per system via Measure-Density Estimator
+  // Step 5: Compute dynamic measures per system via Measure-Density Estimator
   const systemRanges: Array<[number, number]> = [];
   let mCursor = 1;
 
@@ -541,27 +583,35 @@ export function layoutTonicSolfaDocument(
     mCursor = actualEndM + 1;
   }
 
-  // 4. Build Systems with Suppression of Inactive Internal Voices (Requirement 7)
-  const systems: SolfaSystem[] = systemRanges.map(([mStart, mEnd], sysIndex) => {
-    // Determine which (Part, Staff, Voice) units have active musical events in [mStart, mEnd]
-    const activeUnitsInSystem = allStaffVoices.filter(sv => {
-      const part = partsToTypeset.find(p => p.id === sv.partId);
-      if (!part) return false;
+  // Step 6: Build Systems
+  // For SATB scores: rows S, A, T, B are preserved across EVERY system (Requirement 9)
+  const isSatbScore = effectiveMode === 'SATB';
 
-      return part.measures.some(m => {
-        if (m.number < mStart || m.number > mEnd) return false;
-        return m.events.some(e => {
-          const s = e.staff || 1;
-          const v = e.voice || 1;
-          return s === sv.staffNum && v === sv.voiceNum && !e.isRest;
+  const systems: SolfaSystem[] = systemRanges.map(([mStart, mEnd], sysIndex) => {
+    let unitsToRender: StaffVoiceSpec[];
+
+    if (isSatbScore) {
+      // In SATB score: NEVER drop a voice due to silence. All 4 rows (S, A, T, B) are kept!
+      unitsToRender = allStaffVoices;
+    } else {
+      // Check active units in this system
+      const activeUnitsInSystem = allStaffVoices.filter(sv => {
+        const part = partsToTypeset.find(p => p.id === sv.partId);
+        if (!part) return false;
+
+        return part.measures.some(m => {
+          if (m.number < mStart || m.number > mEnd) return false;
+          return m.events.some(e => {
+            const s = e.staff || 1;
+            return s === sv.staffNum && !e.isRest;
+          });
         });
       });
-    });
 
-    // Fallback: If score is entirely resting in this system, keep the primary staff of each part
-    const unitsToRender = activeUnitsInSystem.length > 0
-      ? activeUnitsInSystem
-      : allStaffVoices.filter(sv => sv.staffNum === 1 && sv.voiceNum === 1);
+      unitsToRender = activeUnitsInSystem.length > 0
+        ? activeUnitsInSystem
+        : allStaffVoices.filter(sv => sv.staffNum === 1);
+    }
 
     // Calculate dynamic measure widths based on density within this system
     const measureDensities = new Map<number, number>();
@@ -578,7 +628,6 @@ export function layoutTonicSolfaDocument(
       const d = measureDensities.get(m) || 1.0;
       const widthPercent = Math.round((d / (totalDensityInSys || 1)) * 100);
 
-      // Find any rehearsal marks, directions, or key changes at this measure
       const firstPart = partsToTypeset[0];
       const mObj = firstPart?.measures.find(x => x.number === m);
 
@@ -602,18 +651,13 @@ export function layoutTonicSolfaDocument(
     const voiceRows: SolfaVoiceSystemRow[] = unitsToRender.map(sv => {
       const part = partsToTypeset.find(p => p.id === sv.partId)!;
 
-      // Count active voices on this staff within this system
-      const activeVoicesOnThisStaff = unitsToRender.filter(
-        u => u.partId === sv.partId && u.staffNum === sv.staffNum
-      ).length;
-
       const userOverride = options?.partLabelOverrides?.[sv.rowKey] || options?.partLabelOverrides?.[sv.partId];
       const displayLabel = getHumanReadableStaffLabel(
         sv.partName,
         sv.staffNum,
         sv.totalStavesInPart,
         sv.voiceNum,
-        activeVoicesOnThisStaff,
+        1,
         userOverride
       );
 
@@ -649,7 +693,7 @@ export function layoutTonicSolfaDocument(
             lyricTexts: beats.map(b => b.lyric || '')
           });
         } else {
-          // Placeholder measure
+          // Placeholder rest measure
           const beats = layoutMeasureBeatsForVoice({
             number: mNum,
             keySignature: mKey,
@@ -688,36 +732,34 @@ export function layoutTonicSolfaDocument(
       };
     });
 
+    // Extract unified shared lyrics row for this system (e.g. for SATB hymn presentation)
+    let sharedLyricsRow: Array<{ measureNumber: number; lyricTexts: string[] }> | undefined;
+    const voiceWithLyrics = voiceRows.find(vr => vr.hasLyrics && vr.lyricsRow);
+    if (voiceWithLyrics && voiceWithLyrics.lyricsRow) {
+      sharedLyricsRow = voiceWithLyrics.lyricsRow;
+    }
+
     return {
       systemIndex: sysIndex,
       measuresRange: [mStart, mEnd],
       measureHeaders,
-      voiceRows
+      voiceRows,
+      sharedLyricsRow
     };
   });
 
-  // 5. Explicit A4 Pagination Engine (Requirements 10, 11, 13, 14, 29)
-  // Page height budget:
-  // A4 portrait @ 96DPI is ~1123px height.
-  // Margins: top 48px, bottom 48px.
-  // First page has title header (~160px) + footer (~35px) -> usable ~830px.
-  // Later pages have running header (~40px) + footer (~35px) -> usable ~950px.
-  //
-  // System height calculation:
-  // - Measure numbers / banner: 24px
-  // - For each voice row: 38px
-  // - For each lyrics row: 20px
-  // - System gap: 28px
+  // Step 7: Explicit A4 Pagination Engine
+  // A4 portrait usable height:
+  // First page: ~850px, Later pages: ~950px
   function calculateSystemHeight(sys: SolfaSystem): number {
-    let height = 24 + 28; // header + gap
+    let height = 22 + 24; // header + system gap
     sys.voiceRows.forEach(vr => {
-      // If voice has chords, allow slightly taller row
       const hasChords = vr.measures.some(m => m.beats.some(b => b.isChord));
-      height += hasChords ? 46 : 36;
-      if (vr.hasLyrics) {
-        height += 20;
-      }
+      height += hasChords ? 38 : 30;
     });
+    if (sys.sharedLyricsRow || sys.voiceRows.some(vr => vr.hasLyrics)) {
+      height += 20;
+    }
     return height;
   }
 
@@ -727,7 +769,7 @@ export function layoutTonicSolfaDocument(
 
   while (currentSystemIdx < systems.length) {
     const isFirstPage = pageNum === 1;
-    const usableHeight = isFirstPage ? 830 : 950;
+    const usableHeight = isFirstPage ? 850 : 950;
 
     let accumulatedHeight = 0;
     const pageSystems: SolfaSystem[] = [];
@@ -752,7 +794,7 @@ export function layoutTonicSolfaDocument(
       isFirstPage,
       header: {
         title: effectiveTitle,
-        subtitle: 'Tonic Sol-fa Score',
+        subtitle: isSatbScore ? 'Tonic Sol-fa (SATB)' : 'Tonic Sol-fa Score',
         composer: parsedScore.composer,
         arranger: parsedScore.arranger,
         lyricist: parsedScore.lyricist,

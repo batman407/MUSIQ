@@ -9,17 +9,23 @@ import {
   Layers,
   CheckSquare,
   Square,
-  Edit2,
-  X,
-  Maximize2
+  Sparkles,
+  Info,
+  X
 } from 'lucide-react';
-import { ParsedScore, KeySignatureInfo } from '../../services/musicXmlParser';
+import { ParsedScore } from '../../services/musicXmlParser';
 import {
   layoutTonicSolfaDocument,
   inspectScoreStructure,
   SolfaSheetPage,
   TypesetOptions
 } from '../../services/solfaSheetLayout';
+import {
+  inferScoreStructure,
+  normalizeScoreTitle,
+  StructureInferenceMode,
+  StructureInferenceResult
+} from '../../services/scoreStructureInference';
 import { Button } from '../common/Button';
 
 interface TonicSolfaSheetProps {
@@ -34,14 +40,22 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [activePageIndex, setActivePageIndex] = useState<number>(0);
   const [isStructureOpen, setIsStructureOpen] = useState<boolean>(false);
+  const [showEvidence, setShowEvidence] = useState<boolean>(false);
+
+  // Structural mode: AUTO (inference), SATB, KEYBOARD, INSTRUMENTAL, CUSTOM
+  const [structureMode, setStructureMode] = useState<StructureInferenceMode>('AUTO');
 
   // Customization state for Score Structure Panel
   const [excludedPartIds, setExcludedPartIds] = useState<string[]>([]);
   const [partLabelOverrides, setPartLabelOverrides] = useState<Record<string, string>>({});
   const [titleOverride, setTitleOverride] = useState<string>('');
-  const [keyOverrideName, setKeyOverrideName] = useState<string>('');
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Genuine Musical Structure Inference
+  const structureInference = useMemo<StructureInferenceResult>(() => {
+    return inferScoreStructure(parsedScore);
+  }, [parsedScore]);
 
   // Inspect the detected score structure (Part → Staff → Voice)
   const scoreStructure = useMemo(() => {
@@ -53,17 +67,16 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
     const opts: TypesetOptions = {
       excludedPartIds,
       partLabelOverrides: Object.keys(partLabelOverrides).length > 0 ? partLabelOverrides : undefined,
-      titleOverride: titleOverride.trim() || undefined
+      titleOverride: titleOverride.trim() || undefined,
+      structureMode
     };
     return opts;
-  }, [excludedPartIds, partLabelOverrides, titleOverride]);
+  }, [excludedPartIds, partLabelOverrides, titleOverride, structureMode]);
 
   // Generate V3 pages
   const pages = useMemo<SolfaSheetPage[]>(() => {
     return layoutTonicSolfaDocument(parsedScore, typesetOptions);
   }, [parsedScore, typesetOptions]);
-
-  const currentPage = pages[activePageIndex] || pages[0];
 
   const handlePrint = () => {
     window.print();
@@ -74,7 +87,6 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
       if (prev.includes(partId)) {
         return prev.filter(id => id !== partId);
       } else {
-        // Prevent disabling all parts
         if (prev.length >= scoreStructure.length - 1) return prev;
         return [...prev, partId];
       }
@@ -88,10 +100,109 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
     }));
   };
 
+  const effectiveStructureTitle = structureMode === 'AUTO'
+    ? structureInference.badgeText
+    : structureMode === 'SATB'
+    ? 'Four-part harmony (SATB)'
+    : structureMode === 'KEYBOARD'
+    ? 'Keyboard (Piano RH / LH)'
+    : structureMode === 'INSTRUMENTAL'
+    ? 'Instrumental Score'
+    : 'Custom Part Configuration';
+
   return (
-    <div className="space-y-6">
-      {/* Top Controls Bar */}
+    <div className="space-y-4">
+      {/* ================= 1. MUSICAL ROLE & STRUCTURE INFERENCE BAR ================= */}
       <div className="bg-[#111114] border border-[#27272D] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg print:hidden">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-[#8B5CF6]/20 border border-[#8B5CF6]/40 flex items-center justify-center text-[#A78BFA] shrink-0">
+            <Sparkles size={16} />
+          </div>
+          <div>
+            <div className="text-xs font-mono font-bold text-[#F4F1EA] flex items-center gap-2">
+              <span className="text-[#9A9AA3]">Detected:</span>
+              <span className="text-[#F4F1EA]">{structureInference.badgeText}</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#10B981]/20 text-[#34D399] font-mono">
+                {Math.round(structureInference.confidence * 100)}% match
+              </span>
+              <button
+                onClick={() => setShowEvidence(prev => !prev)}
+                className="text-[#9A9AA3] hover:text-[#F4F1EA] p-0.5 cursor-pointer ml-1"
+                title="View inference evidence"
+              >
+                <Info size={13} />
+              </button>
+            </div>
+            <div className="text-[11px] font-mono text-[#9A9AA3]">
+              Parts: <span className="text-[#E4E4E7]">{structureInference.partsSummary}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Structure Mode Selection Buttons */}
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono text-[#6E6E77] hidden sm:inline">Score Structure:</span>
+          <div className="flex items-center gap-1 bg-[#18181D] border border-[#27272D] p-1 rounded-xl text-xs font-mono">
+            {(['AUTO', 'SATB', 'KEYBOARD', 'INSTRUMENTAL', 'CUSTOM'] as StructureInferenceMode[]).map(mode => {
+              const isSelected = structureMode === mode;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => {
+                    setStructureMode(mode);
+                    if (mode === 'CUSTOM') setIsStructureOpen(true);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer font-bold ${
+                    isSelected
+                      ? 'bg-[#8B5CF6] text-white shadow-md'
+                      : 'text-[#9A9AA3] hover:text-[#F4F1EA]'
+                  }`}
+                  title={`Select ${mode} score structure`}
+                >
+                  {mode}
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => setIsStructureOpen(prev => !prev)}
+            className={`p-1.5 rounded-xl border text-xs font-mono transition-colors cursor-pointer ${
+              isStructureOpen
+                ? 'bg-[#8B5CF6]/20 border-[#8B5CF6] text-[#A78BFA]'
+                : 'bg-[#18181D] border-[#27272D] text-[#9A9AA3] hover:text-[#F4F1EA]'
+            }`}
+            title="Configure score parts and labels"
+          >
+            <Layers size={15} />
+          </button>
+        </div>
+      </div>
+
+      {/* Inference Evidence Dropdown */}
+      {showEvidence && (
+        <div className="bg-[#111114] border border-[#8B5CF6]/30 rounded-2xl p-4 shadow-xl print:hidden animate-in fade-in duration-150 text-xs font-mono">
+          <div className="flex items-center justify-between border-b border-[#27272D] pb-2 mb-2">
+            <span className="font-bold text-[#A78BFA] flex items-center gap-1.5">
+              <Sparkles size={14} /> Structure Inference Evidence
+            </span>
+            <button
+              onClick={() => setShowEvidence(false)}
+              className="text-[#9A9AA3] hover:text-[#F4F1EA] cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <ul className="space-y-1 text-[#9A9AA3] list-disc list-inside">
+            {structureInference.evidence.map((ev, idx) => (
+              <li key={`ev-${idx}`} className="text-[#E4E4E7]">{ev}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ================= 2. CONTROLS BAR (ZOOM, PAGES, EXPORT, PRINT) ================= */}
+      <div className="bg-[#111114] border border-[#27272D] rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-lg print:hidden">
         <div className="flex items-center gap-3">
           <div className="text-xs font-mono font-bold text-[#F4F1EA]">
             <span>TONIC SOL-FA SCORE</span>
@@ -105,20 +216,6 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Score Structure Panel Toggle */}
-          <button
-            onClick={() => setIsStructureOpen(prev => !prev)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-mono flex items-center gap-1.5 border transition-colors cursor-pointer ${
-              isStructureOpen
-                ? 'bg-[#8B5CF6]/20 border-[#8B5CF6] text-[#A78BFA]'
-                : 'bg-[#18181D] border-[#27272D] text-[#9A9AA3] hover:text-[#F4F1EA]'
-            }`}
-            title="Inspect & configure score structure (staves, voices, part labels)"
-          >
-            <Layers size={14} />
-            <span>Score Structure</span>
-          </button>
-
           {/* Zoom Controls */}
           <div className="flex items-center gap-1 bg-[#18181D] border border-[#27272D] rounded-xl px-2 py-1 text-xs font-mono text-[#F4F1EA]">
             <button
@@ -147,7 +244,7 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
             </button>
           </div>
 
-          {/* Page Navigation for multi-page document */}
+          {/* Page Navigation */}
           {pages.length > 1 && (
             <div className="flex items-center gap-1 bg-[#18181D] border border-[#27272D] rounded-xl px-2 py-1 text-xs font-mono text-[#F4F1EA]">
               <button
@@ -172,7 +269,7 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
             </div>
           )}
 
-          {/* Native Print Trigger */}
+          {/* Native Print */}
           <Button
             variant="secondary"
             size="sm"
@@ -196,17 +293,17 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
         </div>
       </div>
 
-      {/* Score Structure Drawer / Configuration Panel */}
+      {/* ================= 3. SCORE STRUCTURE CONFIGURATION DRAWER ================= */}
       {isStructureOpen && (
         <div className="bg-[#111114] border border-[#8B5CF6]/40 rounded-2xl p-5 space-y-4 shadow-xl print:hidden animate-in fade-in duration-150">
           <div className="flex items-center justify-between border-b border-[#27272D] pb-3">
             <div>
               <h4 className="text-sm font-bold text-[#F4F1EA] flex items-center gap-2">
                 <Layers size={16} className="text-[#A78BFA]" />
-                <span>Score Structure & Part Configuration</span>
+                <span>Score Structure & Custom Part Configuration</span>
               </h4>
               <p className="text-xs text-[#9A9AA3] mt-0.5">
-                Every recognized part and staff is included by default. Rename labels or toggle visibility below.
+                Current mode: <span className="text-[#A78BFA] font-bold">{effectiveStructureTitle}</span>. Rename labels or toggle visibility below.
               </p>
             </div>
             <button
@@ -215,6 +312,18 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
             >
               <X size={16} />
             </button>
+          </div>
+
+          {/* Title Override Input */}
+          <div className="flex items-center gap-3 bg-[#18181D] p-3 rounded-xl border border-[#27272D]">
+            <span className="text-xs font-mono text-[#9A9AA3] shrink-0">Printed Title:</span>
+            <input
+              type="text"
+              placeholder={normalizeScoreTitle(parsedScore.title)}
+              value={titleOverride}
+              onChange={e => setTitleOverride(e.target.value)}
+              className="w-full bg-[#111114] border border-[#27272D] focus:border-[#8B5CF6] rounded px-3 py-1 text-xs text-[#F4F1EA] focus:outline-none font-sans"
+            />
           </div>
 
           {/* Parts List */}
@@ -254,7 +363,6 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
                     {part.staves.map(st => (
                       <div key={`st-${st.staffNumber}`} className="flex items-center justify-between text-[11px]">
                         <span>{st.label} ({st.clef})</span>
-                        <span>{st.voices.length} Voice{st.voices.length === 1 ? '' : 's'}</span>
                       </div>
                     ))}
                   </div>
@@ -277,242 +385,274 @@ export const TonicSolfaSheet: React.FC<TonicSolfaSheetProps> = ({
         </div>
       )}
 
-      {/* Pages Container */}
+      {/* ================= 4. TYPESET DOCUMENT CONTAINER ================= */}
       <div
         ref={containerRef}
         className="flex flex-col items-center gap-8 overflow-x-auto py-6 bg-[#0A0A0C] rounded-2xl p-4 sm:p-8 border border-[#27272D]/60 print:p-0 print:m-0 print:border-none print:bg-white"
       >
-        {pages.map((page, pageIdx) => (
-          <div
-            key={`solfa-page-${page.pageNumber}`}
-            id={`solfa-sheet-page-${page.pageNumber}`}
-            className="solfa-sheet-page bg-[#FFFFFA] text-[#111111] shadow-2xl rounded-sm border border-[#E5E5E0] relative flex flex-col justify-between print:shadow-none print:border-none print:m-0"
-            style={{
-              width: '794px',
-              minHeight: '1123px',
-              padding: '48px 52px',
-              transform: zoomLevel !== 1 ? `scale(${zoomLevel})` : undefined,
-              transformOrigin: 'top center',
-              fontFamily: '"Times New Roman", Times, Georgia, serif',
-              pageBreakAfter: pageIdx < pages.length - 1 ? 'always' : 'auto'
-            }}
-          >
-            {/* Header: Page 1 gets full musical title header; Page 2+ gets running header */}
-            {page.isFirstPage ? (
-              <div className="border-b-2 border-black pb-4 mb-6 space-y-2">
-                <div className="text-center">
-                  <h1 className="text-2xl sm:text-3xl font-bold uppercase tracking-wider text-black font-serif">
-                    {page.header.title}
-                  </h1>
-                  {page.header.subtitle && (
-                    <div className="text-xs font-semibold tracking-widest uppercase text-gray-700 font-sans mt-0.5">
-                      {page.header.subtitle}
-                    </div>
-                  )}
-                </div>
+        {pages.map((page, pageIdx) => {
+          // Detect whether this page's systems use compact short labels (e.g. S, A, T, B)
+          const allShortLabels = page.systems.every(s =>
+            s.voiceRows.every(vr => vr.displayLabel.length <= 2)
+          );
+          const labelColClass = allShortLabels ? 'w-12 shrink-0' : 'w-24 shrink-0';
+          const headerPadClass = allShortLabels ? 'pl-12 pr-1' : 'pl-24 pr-1';
 
-                <div className="flex items-end justify-between text-xs pt-2 font-sans font-medium text-gray-900 border-t border-gray-300 mt-2">
-                  <div className="text-left space-y-0.5">
-                    <div>
-                      <span className="font-bold">Key:</span> {page.header.keySignature} ({page.header.dohPitch})
-                    </div>
-                    <div>
-                      <span className="font-bold">Time:</span> {page.header.timeSignature}
-                    </div>
-                  </div>
-
-                  <div className="text-right space-y-0.5">
-                    {page.header.composer && (
-                      <div><span className="font-bold">Composer:</span> {page.header.composer}</div>
-                    )}
-                    {page.header.arranger && (
-                      <div><span className="font-bold">Arr.:</span> {page.header.arranger}</div>
-                    )}
-                    {page.header.lyricist && (
-                      <div><span className="font-bold">Words:</span> {page.header.lyricist}</div>
-                    )}
-                    {page.header.tempo && <div>M.M. ♩ = {page.header.tempo}</div>}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="border-b border-gray-400 pb-2 mb-6 flex items-center justify-between text-xs font-sans text-gray-700">
-                <span className="font-bold uppercase tracking-wide">{page.header.title}</span>
-                <span>Page {page.pageNumber}</span>
-              </div>
-            )}
-
-            {/* Systems Layout (Horizontal Systems of Rectangular Measure Cells) */}
-            <div className="flex-1 space-y-7">
-              {page.systems.map(system => (
-                <div
-                  key={`system-${system.systemIndex}`}
-                  className="space-y-1 relative"
-                >
-                  {/* System Header Row: Rehearsal Marks, Tempos, Modulations & Measure Numbers */}
-                  <div className="flex items-end font-sans text-xs text-gray-700 pl-24 pr-1">
-                    {system.measureHeaders.map(mh => (
-                      <div
-                        key={`hdr-m-${mh.measureNumber}`}
-                        style={{ width: `${mh.widthPercent}%` }}
-                        className="px-1 flex flex-col justify-end"
-                      >
-                        {/* Upper Annotations (Rehearsal Marks, Directions, Modulations) */}
-                        <div className="text-[10px] font-bold text-gray-900 flex items-center gap-1 leading-none mb-0.5 truncate">
-                          {mh.rehearsalMark && (
-                            <span className="border border-black px-1 py-0.2 rounded font-mono font-bold bg-gray-100">
-                              {mh.rehearsalMark}
-                            </span>
-                          )}
-                          {mh.directionWords && (
-                            <span className="italic">{mh.directionWords}</span>
-                          )}
-                          {mh.modulationText && (
-                            <span className="text-[#4C1D95] font-semibold">{mh.modulationText}</span>
-                          )}
-                          {mh.tempoBpm && (
-                            <span className="font-mono">♩={mh.tempoBpm}</span>
-                          )}
-                        </div>
-
-                        {/* Measure Number Box */}
-                        <div className="text-[10px] font-mono font-semibold text-gray-500">
-                          {mh.measureNumber}
-                        </div>
+          return (
+            <div
+              key={`solfa-page-${page.pageNumber}`}
+              id={`solfa-sheet-page-${page.pageNumber}`}
+              className="solfa-sheet-page bg-[#FFFFFA] text-[#111111] shadow-2xl rounded-sm border border-[#E5E5E0] relative flex flex-col justify-between print:shadow-none print:border-none print:m-0"
+              style={{
+                width: '794px',
+                minHeight: '1123px',
+                padding: '36px 36px', // Full printable width (normal A4 portrait margins)
+                transform: zoomLevel !== 1 ? `scale(${zoomLevel})` : undefined,
+                transformOrigin: 'top center',
+                fontFamily: '"Times New Roman", Times, Georgia, serif',
+                pageBreakAfter: pageIdx < pages.length - 1 ? 'always' : 'auto'
+              }}
+            >
+              {/* Header: Page 1 gets clean musical header; Page 2+ gets running header */}
+              {page.isFirstPage ? (
+                <div className="border-b-2 border-black pb-3 mb-5 space-y-1.5">
+                  <div className="text-center">
+                    <h1 className="text-2xl sm:text-3xl font-bold uppercase tracking-wider text-black font-serif">
+                      {page.header.title}
+                    </h1>
+                    {page.header.subtitle && (
+                      <div className="text-xs font-semibold tracking-widest uppercase text-gray-700 font-sans mt-0.5">
+                        {page.header.subtitle}
                       </div>
-                    ))}
+                    )}
                   </div>
 
-                  {/* Systems Container: Staves and Voices */}
-                  <div className="border-t-2 border-b-2 border-black divide-y divide-gray-300">
-                    {system.voiceRows.map(voiceRow => (
-                      <div
-                        key={voiceRow.rowId}
-                        className="py-1"
-                      >
-                        {/* Voice Musical Notation Row */}
-                        <div className="flex items-center text-sm leading-none font-sans">
-                          {/* Part / Staff Label Column (e.g. Trumpet, Solo, Organ RH, S, A, T, B) */}
-                          <div
-                            className="w-24 shrink-0 font-bold text-xs font-sans text-gray-900 uppercase pr-2 truncate"
-                            title={voiceRow.displayLabel}
-                          >
-                            {voiceRow.displayLabel}
+                  <div className="flex items-end justify-between text-xs pt-2 font-sans font-medium text-gray-900 border-t border-gray-300 mt-2">
+                    <div className="text-left space-y-0.5">
+                      <div>
+                        <span className="font-bold">Key:</span> {page.header.keySignature} ({page.header.dohPitch})
+                      </div>
+                      <div>
+                        <span className="font-bold">Time:</span> {page.header.timeSignature}
+                      </div>
+                    </div>
+
+                    <div className="text-right space-y-0.5">
+                      {page.header.composer && (
+                        <div><span className="font-bold">Composer:</span> {page.header.composer}</div>
+                      )}
+                      {page.header.arranger && (
+                        <div><span className="font-bold">Arr.:</span> {page.header.arranger}</div>
+                      )}
+                      {page.header.lyricist && (
+                        <div><span className="font-bold">Words:</span> {page.header.lyricist}</div>
+                      )}
+                      {page.header.tempo && <div>M.M. ♩ = {page.header.tempo}</div>}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-b border-gray-400 pb-2 mb-5 flex items-center justify-between text-xs font-sans text-gray-700">
+                  <span className="font-bold uppercase tracking-wide">{page.header.title}</span>
+                  <span>Page {page.pageNumber}</span>
+                </div>
+              )}
+
+              {/* Systems Layout: Aligned Horizontal Systems */}
+              <div className="flex-1 space-y-6">
+                {page.systems.map(system => (
+                  <div
+                    key={`system-${system.systemIndex}`}
+                    className="space-y-1 relative"
+                  >
+                    {/* System Header Row: Rehearsal Marks, Modulations, Measure Numbers */}
+                    <div className={`flex items-end font-sans text-xs text-gray-700 ${headerPadClass}`}>
+                      {system.measureHeaders.map(mh => (
+                        <div
+                          key={`hdr-m-${mh.measureNumber}`}
+                          style={{ width: `${mh.widthPercent}%` }}
+                          className="px-1 flex flex-col justify-end"
+                        >
+                          <div className="text-[10px] font-bold text-gray-900 flex items-center gap-1 leading-none mb-0.5 truncate">
+                            {mh.rehearsalMark && (
+                              <span className="border border-black px-1 py-0.2 rounded font-mono font-bold bg-gray-100">
+                                {mh.rehearsalMark}
+                              </span>
+                            )}
+                            {mh.directionWords && (
+                              <span className="italic">{mh.directionWords}</span>
+                            )}
+                            {mh.modulationText && (
+                              <span className="text-[#4C1D95] font-semibold">{mh.modulationText}</span>
+                            )}
+                            {mh.tempoBpm && (
+                              <span className="font-mono">♩={mh.tempoBpm}</span>
+                            )}
                           </div>
 
-                          {/* Measures in System with Rectangular Cells */}
-                          <div className="flex-1 flex items-stretch">
-                            {voiceRow.measures.map((measure, mIdx) => {
-                              const headerInfo = system.measureHeaders[mIdx];
-                              const widthPercent = headerInfo ? headerInfo.widthPercent : 100 / voiceRow.measures.length;
+                          <div className="text-[10px] font-mono font-semibold text-gray-500">
+                            {mh.measureNumber}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
 
-                              return (
-                                <div
-                                  key={`v-${voiceRow.rowId}-m-${measure.measureNumber}`}
-                                  style={{ width: `${widthPercent}%` }}
-                                  className={`flex items-center justify-between px-1 border-r ${
-                                    measure.isEndBar
-                                      ? 'border-r-4 border-black'
-                                      : measure.isDoubleBar
-                                      ? 'border-r-2 border-double border-black'
-                                      : 'border-r border-black'
-                                  }`}
-                                >
-                                  {/* Initial Barline for first measure */}
-                                  {mIdx === 0 && (
-                                    <span className="font-bold text-black mr-0.5">|</span>
-                                  )}
+                    {/* Systems Container: Persistent Rows with Exactly Aligned Column Borders */}
+                    <div className="border-t-2 border-b-2 border-black divide-y divide-gray-300">
+                      {system.voiceRows.map(voiceRow => (
+                        <div
+                          key={voiceRow.rowId}
+                          className="py-1"
+                        >
+                          <div className="flex items-center text-sm leading-none font-sans">
+                            {/* Part / Voice Label (e.g. S, A, T, B or Trumpet, Organ RH) */}
+                            <div
+                              className={`${labelColClass} font-bold text-xs font-sans text-gray-900 uppercase pr-2 truncate text-center sm:text-left`}
+                              title={voiceRow.displayLabel}
+                            >
+                              {voiceRow.displayLabel}
+                            </div>
 
-                                  {/* If entire measure is a rest in this active voice */}
-                                  {measure.isEntirelyRest ? (
-                                    <div className="flex-1 text-center font-mono text-gray-400 font-bold">
-                                      —
-                                    </div>
-                                  ) : (
-                                    /* Beats in Measure */
-                                    measure.beats.map((beat, bIdx) => (
-                                      <React.Fragment key={`b-${bIdx}`}>
-                                        <div
-                                          className={`flex-1 flex items-center justify-center font-semibold text-center ${
-                                            beat.isSustained
-                                              ? 'text-gray-700 font-bold'
-                                              : 'text-black'
-                                          }`}
-                                        >
-                                          {/* Simultaneous Chords: Render stacked vertically */}
-                                          {beat.isChord && beat.chordSyllables && beat.chordSyllables.length > 1 ? (
-                                            <div className="flex flex-col items-center justify-center -space-y-0.5 leading-tight font-mono text-[13px]">
-                                              {beat.chordSyllables.map((syl, sIdx) => (
-                                                <span key={`syl-${sIdx}`} className="font-bold">
-                                                  {syl}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          ) : (
-                                            /* Single Note / Text / Sustained */
-                                            <span className="font-mono text-sm font-bold tracking-tight">
-                                              {beat.text || ' '}
-                                            </span>
+                            {/* Measures in System with Rectangular Cells & Matching Boundaries */}
+                            <div className="flex-1 flex items-stretch">
+                              {voiceRow.measures.map((measure, mIdx) => {
+                                const headerInfo = system.measureHeaders[mIdx];
+                                const widthPercent = headerInfo ? headerInfo.widthPercent : 100 / voiceRow.measures.length;
+
+                                return (
+                                  <div
+                                    key={`v-${voiceRow.rowId}-m-${measure.measureNumber}`}
+                                    style={{ width: `${widthPercent}%` }}
+                                    className={`flex items-center justify-between px-1 border-r ${
+                                      measure.isEndBar
+                                        ? 'border-r-4 border-black'
+                                        : measure.isDoubleBar
+                                        ? 'border-r-2 border-double border-black'
+                                        : 'border-r border-black'
+                                    }`}
+                                  >
+                                    {/* Initial Barline for first measure */}
+                                    {mIdx === 0 && (
+                                      <span className="font-bold text-black mr-0.5">|</span>
+                                    )}
+
+                                    {/* If entire measure is a rest in this voice */}
+                                    {measure.isEntirelyRest ? (
+                                      <div className="flex-1 text-center font-mono text-gray-400 font-bold">
+                                        —
+                                      </div>
+                                    ) : (
+                                      /* Beats in Measure with Deterministic Alignment */
+                                      measure.beats.map((beat, bIdx) => (
+                                        <React.Fragment key={`b-${bIdx}`}>
+                                          <div
+                                            className={`flex-1 flex items-center justify-center font-semibold text-center ${
+                                              beat.isSustained
+                                                ? 'text-gray-700 font-bold'
+                                                : 'text-black'
+                                            }`}
+                                          >
+                                            {beat.isChord && beat.chordSyllables && beat.chordSyllables.length > 1 ? (
+                                              <div className="flex flex-col items-center justify-center -space-y-0.5 leading-tight font-mono text-[13px]">
+                                                {beat.chordSyllables.map((syl, sIdx) => (
+                                                  <span key={`syl-${sIdx}`} className="font-bold">
+                                                    {syl}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <span className="font-mono text-sm font-bold tracking-tight">
+                                                {beat.text || ' '}
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Beat Delimiter Colon */}
+                                          {bIdx < measure.beats.length - 1 && (
+                                            <span className="text-gray-500 font-bold mx-0.5 select-none">:</span>
                                           )}
-                                        </div>
-
-                                        {/* Beat Delimiter Colon (between beats within measure) */}
-                                        {bIdx < measure.beats.length - 1 && (
-                                          <span className="text-gray-500 font-bold mx-0.5 select-none">:</span>
-                                        )}
-                                      </React.Fragment>
-                                    ))
-                                  )}
-                                </div>
-                              );
-                            })}
+                                        </React.Fragment>
+                                      ))
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
+
+                          {/* Individual Part Lyrics (only if no unified system lyrics row) */}
+                          {!system.sharedLyricsRow && voiceRow.hasLyrics && voiceRow.lyricsRow && (
+                            <div className={`flex items-center text-xs font-sans text-gray-800 italic ${headerPadClass} pt-0.5`}>
+                              {voiceRow.lyricsRow.map((lr, mIdx) => {
+                                const headerInfo = system.measureHeaders[mIdx];
+                                const widthPercent = headerInfo ? headerInfo.widthPercent : 100 / voiceRow.measures.length;
+
+                                return (
+                                  <div
+                                    key={`lyric-m-${lr.measureNumber}`}
+                                    style={{ width: `${widthPercent}%` }}
+                                    className="flex items-center justify-between px-1"
+                                  >
+                                    {lr.lyricTexts.map((text, tIdx) => (
+                                      <span
+                                        key={`lt-${tIdx}`}
+                                        className="flex-1 text-center truncate px-0.5 leading-tight font-medium"
+                                        title={text}
+                                      >
+                                        {text}
+                                      </span>
+                                    ))}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
+                      ))}
+                    </div>
 
-                        {/* Synchronized Lyrics Row (Directly underneath vocal voice that sings them) */}
-                        {voiceRow.hasLyrics && voiceRow.lyricsRow && (
-                          <div className="flex items-center text-xs font-sans text-gray-800 italic pl-24 pt-0.5">
-                            {voiceRow.lyricsRow.map((lr, mIdx) => {
-                              const headerInfo = system.measureHeaders[mIdx];
-                              const widthPercent = headerInfo ? headerInfo.widthPercent : 100 / voiceRow.measures.length;
+                    {/* Unified Shared Lyrics Row (Clean hymn layout beneath SATB system) */}
+                    {system.sharedLyricsRow && (
+                      <div className={`flex items-center text-xs font-serif text-gray-900 italic pt-1 ${headerPadClass}`}>
+                        {system.sharedLyricsRow.map((lr, mIdx) => {
+                          const headerInfo = system.measureHeaders[mIdx];
+                          const widthPercent = headerInfo ? headerInfo.widthPercent : 100 / system.sharedLyricsRow!.length;
 
-                              return (
-                                <div
-                                  key={`lyric-m-${lr.measureNumber}`}
-                                  style={{ width: `${widthPercent}%` }}
-                                  className="flex items-center justify-between px-1"
+                          return (
+                            <div
+                              key={`sys-lyric-m-${lr.measureNumber}`}
+                              style={{ width: `${widthPercent}%` }}
+                              className="flex items-center justify-between px-1"
+                            >
+                              {lr.lyricTexts.map((text, tIdx) => (
+                                <span
+                                  key={`slt-${tIdx}`}
+                                  className="flex-1 text-center truncate px-0.5 leading-tight font-medium"
+                                  title={text}
                                 >
-                                  {lr.lyricTexts.map((text, tIdx) => (
-                                    <span
-                                      key={`lt-${tIdx}`}
-                                      className="flex-1 text-center truncate px-0.5 leading-tight font-medium"
-                                      title={text}
-                                    >
-                                      {text}
-                                    </span>
-                                  ))}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                                  {text}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            {/* Document Footer */}
-            <div className="border-t border-gray-400 pt-3 mt-6 flex items-center justify-between text-[10px] font-sans text-gray-500">
-              <span>Generated with MUSIQ</span>
-              <span className="font-bold">
-                Page {page.pageNumber} of {page.totalPages}
-              </span>
-              <span>All Parts & Staves Preserved</span>
+              {/* Document Footer */}
+              <div className="border-t border-gray-400 pt-2.5 mt-4 flex items-center justify-between text-[10px] font-sans text-gray-500">
+                <span>Generated with MUSIQ</span>
+                <span className="font-bold">
+                  Page {page.pageNumber} of {page.totalPages}
+                </span>
+                <span>{effectiveStructureTitle}</span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
